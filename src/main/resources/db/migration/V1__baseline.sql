@@ -1,0 +1,1 @@
+-- Baseline migration. Add module tables in subsequent Flyway migrations.
