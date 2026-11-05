@@ -39,7 +39,12 @@ public class ScheduleService {
             throw new ScheduleException(BAD_REQUEST, "INVALID_SHIFT",
                 "Giờ ca phải khác nhau, chính xác đến phút; thời gian nghỉ phải ngắn hơn ca làm.");
         }
-        return ShiftResponse.from(shifts.save(new ShiftTemplate(request.name().strip(), start, end, request.breakMinutes(), actorId)));
+        if (request.overnight() != end.isBefore(start)) {
+            throw new ScheduleException(BAD_REQUEST, "INVALID_OVERNIGHT",
+                "Chỉ đánh dấu ca qua đêm khi giờ kết thúc nhỏ hơn giờ bắt đầu.");
+        }
+        return ShiftResponse.from(shifts.save(new ShiftTemplate(request.name().strip(), start, end,
+            request.breakMinutes(), actorId, request.requiredHeadcount(), request.requiredPosition().strip(), request.overnight())));
     }
     public PageResponse<ScheduleResponse> list(UUID actorId, LocalDate from, LocalDate to, UUID employeeId, int page, int size) {
         if (to.isBefore(from) || ChronoUnit.DAYS.between(from, to) > 30) {
