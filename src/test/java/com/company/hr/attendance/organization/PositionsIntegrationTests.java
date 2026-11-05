@@ -85,6 +85,13 @@ class PositionsIntegrationTests {
                 "name","Ca sáng","startTime","08:00","endTime","17:00","breakMinutes",60,
                 "overnight",false,"requiredHeadcount",1,"requiredPositionId",positionId))));
     }
+    @Test void list_emptyCatalog_returns200AndEmptyPage() throws Exception {
+        mvc.perform(get("/api/v1/positions").header("Authorization","Bearer "+adminToken)
+            .param("page","0").param("size","20").param("q","").param("active","true"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.items").isEmpty())
+            .andExpect(jsonPath("$.page").value(0)).andExpect(jsonPath("$.size").value(20))
+            .andExpect(jsonPath("$.totalElements").value(0)).andExpect(jsonPath("$.totalPages").value(0));
+    }
     @Test void create_manager_normalizesAndSharesWithAllManagement() throws Exception {
         var p=json(create(managerToken,"  Thu   ngân  ").andExpect(status().isCreated())
             .andExpect(jsonPath("$.name").value("Thu ngân")));
