@@ -17,7 +17,7 @@ Mẫu ca dùng chung. Chỉ phân ca cho tài khoản EMPLOYEE đang hoạt đ�
 ## Quy tắc
 
 - Ngày làm việc là ngày bắt đầu ca tại `app.timezone` (Asia/Ho_Chi_Minh). Giờ mẫu ca có độ chính xác đến phút.
-- Ca mới bắt buộc có số người cần (requiredHeadcount, số nguyên >= 1), vị trí cần (requiredPosition, tối đa 120 ký tự, không để trống) và cờ overnight.
+- Ca mới bắt buộc có số người cần (requiredHeadcount, số nguyên >= 1), vị trí cần (requiredPositionId từ danh mục đang sử dụng, không để trống) và cờ overnight.
 - Chỉ bật overnight khi giờ kết thúc nhỏ hơn giờ bắt đầu; ca kết thúc ngày hôm sau. Không bật mà nhập giờ kết thúc sớm hơn thì trả 400 INVALID_OVERNIGHT. Hai giờ bằng nhau không hợp lệ; chưa hỗ trợ ca dài 24 giờ.
 - Số người và vị trí là nhu cầu của mẫu ca, hiển thị trong danh sách. Cảnh báo thiếu người/vượt giờ thuộc SS-27; kiểm tra trùng giờ hiện có vẫn hoạt động.
 - Nghỉ trong ca: số phút nguyên, từ 0 và nhỏ hơn tổng thời lượng. Giờ làm = tổng thời lượng trừ phút nghỉ.
@@ -42,7 +42,7 @@ Tất cả endpoint cần Bearer JWT, prefix `/api/v1`.
 Tạo mẫu ca:
 
 ```json
-{"name":"Ca đêm","startTime":"22:00","endTime":"06:00","breakMinutes":30,"requiredHeadcount":2,"requiredPosition":"Bảo vệ","overnight":true}
+{"name":"Ca đêm","startTime":"22:00","endTime":"06:00","breakMinutes":30,"requiredHeadcount":2,"requiredPositionId":"00000000-0000-0000-0000-000000000050","overnight":true}
 ```
 
 Phân ca (thay UUID bằng ID tài khoản và mẫu ca đã tạo):
@@ -51,7 +51,9 @@ Phân ca (thay UUID bằng ID tài khoản và mẫu ca đã tạo):
 {"employeeId":"00000000-0000-0000-0000-000000000003","shiftTemplateId":"00000000-0000-0000-0000-000000000004","workDate":"2026-11-05"}
 ```
 
-Response mẫu ca thêm requiredHeadcount, requiredPosition và overnight. Ca cũ chưa có vị trí trả requiredPosition=null; web ghi Chưa khai báo vị trí. Ca tạo mới bắt buộc nhập vị trí.
+Chọn requiredPositionId từ GET /positions; quản lý cần tạo danh mục trước. Xem [POSITIONS.md](POSITIONS.md).
+
+Response mẫu ca thêm requiredHeadcount, requiredPosition (tên để hiển thị), requiredPositionId và overnight. Ca cũ chưa có vị trí trả requiredPosition=null; web ghi Chưa khai báo vị trí. Ca tạo mới bắt buộc chọn vị trí đang sử dụng.
 
 Response lịch gồm id, employeeId, employeeName, shiftTemplateId, workDate, shiftName, startsAt, endsAt, breakMinutes, workingMinutes, timezone. Ví dụ ca trên lưu startsAt=2026-11-05T15:00:00Z, endsAt=2026-11-05T23:00:00Z, workingMinutes=450.
 
@@ -59,7 +61,7 @@ Trang trả `{items,page,size,totalElements,totalPages}`. Lỗi theo ApiError hi
 
 ## Migration và kiểm thử
 
-Khởi động lại backend để Flyway áp dụng V5 (Java migration tại src/main/java/db/migration/V5__shift_requirements.java). Giữ nguyên V1–V4; tests dùng DB riêng, không trỏ vào NeonDB.
+Khởi động lại backend để Flyway áp dụng đến V6. V5 xử lý giờ ca và yêu cầu nhân sự; V6 thêm danh mục vị trí và liên kết dữ liệu cũ bằng ID. Giữ nguyên V1–V5; tests dùng DB riêng, không trỏ vào NeonDB.
 
 V5 giữ các mẫu ca cũ, đặt số người mặc định 1 và giữ vị trí chưa biết ở NULL. Migration đọc giờ theo cách JDBC cũ rồi chuyển sang JDBC LocalTime, đồng thời xác định cờ ca đêm. Chạy nâng cấp với múi giờ JVM giống bản V4 để giữ nguyên giờ ứng dụng đang hiển thị; mã mới lưu giờ ca trực tiếp, không dịch theo múi giờ máy. Các bản sao lịch UTC đã phân không thay đổi.
 

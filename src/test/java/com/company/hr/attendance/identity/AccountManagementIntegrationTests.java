@@ -34,13 +34,18 @@ class AccountManagementIntegrationTests {
     @Autowired PasswordEncoder passwords;
     @Autowired JdbcTemplate jdbc;
     Account admin, managerA, managerB, employeeA, employeeB;
+    static final UUID POSITION_ID = UUID.fromString("00000000-0000-0000-0000-000000000050");
     private static final String PASSWORD = "Test-password-123!";
 
     @BeforeEach
     void seed() {
+        jdbc.update("DELETE FROM work_schedules");
+        jdbc.update("DELETE FROM work_shift_templates");
         sessions.deleteAll();
         jdbc.update("DELETE FROM identity_account_skills");
         jdbc.update("DELETE FROM identity_accounts");
+        jdbc.update("DELETE FROM organization_positions");
+        jdbc.update("insert into organization_positions(id,name,normalized_name,active,version) values (?,?,?,true,0)", POSITION_ID, "Thu ngân", "thu ngân");
         admin = save("admin", Role.ADMIN, null);
         managerA = save("manager-a", Role.MANAGER, null);
         managerB = save("manager-b", Role.MANAGER, null);
@@ -67,7 +72,7 @@ class AccountManagementIntegrationTests {
         body.put("displayName", account.getDisplayName());
         body.put("role", account.getRole().name());
         body.put("skills", List.of("Thu ngân", "Pha chế"));
-        body.put("position", "Thu ngân");
+        body.put("positionId", POSITION_ID);
         body.put("managerId", account.getManagerId());
         body.put("version", account.getVersion());
         return body;

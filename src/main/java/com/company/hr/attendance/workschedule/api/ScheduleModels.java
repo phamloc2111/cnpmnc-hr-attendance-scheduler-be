@@ -18,7 +18,7 @@ public final class ScheduleModels {
         @NotNull LocalTime endTime,
         @Min(0) @Max(1439) int breakMinutes,
         @NotNull @Min(1) @JsonDeserialize(using = HeadcountDeserializer.class) Integer requiredHeadcount,
-        @NotBlank @Size(max = 120) String requiredPosition,
+        @NotNull UUID requiredPositionId,
         @NotNull Boolean overnight) {}
     public static class HeadcountDeserializer extends JsonDeserializer<Integer> {
         @Override
@@ -32,11 +32,11 @@ public final class ScheduleModels {
     public record AssignShift(@NotNull UUID employeeId, @NotNull UUID shiftTemplateId, @NotNull LocalDate workDate) {}
     public record ShiftResponse(UUID id, String name, LocalTime startTime, LocalTime endTime,
                                 int breakMinutes, int workingMinutes, boolean overnight,
-                                int requiredHeadcount, String requiredPosition) {
+                                int requiredHeadcount, String requiredPosition, UUID requiredPositionId) {
         public static ShiftResponse from(ShiftTemplate shift) {
             return new ShiftResponse(shift.getId(), shift.getName(), shift.getStartTime(), shift.getEndTime(),
                 shift.getBreakMinutes(), ShiftWindow.durationMinutes(shift.getStartTime(), shift.getEndTime()) - shift.getBreakMinutes(),
-                shift.isOvernight(), shift.getRequiredHeadcount(), shift.getRequiredPosition());
+                shift.isOvernight(), shift.getRequiredHeadcount(), shift.getRequiredPosition(), shift.getRequiredPositionId());
         }
     }
     public record ScheduleResponse(UUID id, UUID employeeId, String employeeName, UUID shiftTemplateId,

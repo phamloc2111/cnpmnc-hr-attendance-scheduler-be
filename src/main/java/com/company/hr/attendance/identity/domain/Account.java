@@ -29,6 +29,7 @@ public class Account {
 
     @Column(length = 120)
     private String position;
+    @Column private UUID positionId;
     @Column
     private UUID managerId;
     @Version
@@ -58,6 +59,8 @@ public class Account {
     public Role getRole() { return role; }
     public boolean isLocked() { return locked; }
     public String getPosition() { return position; }
+    public UUID getPositionId() { return positionId; }
+    public void setPositionId(UUID id) { this.positionId = id; }
     public List<String> getSkills() { return skills; }
     public UUID getManagerId() { return managerId; }
     public long getVersion() { return version; }

@@ -40,6 +40,7 @@ class ScheduleIntegrationTests {
     @Autowired DataSource dataSource;
     Account admin, manager, otherManager, employee, outsider;
     String adminToken, managerToken, employeeToken;
+    static final UUID POSITION_ID = UUID.fromString("00000000-0000-0000-0000-000000000051");
     static final String PASSWORD = "Test-password-123!";
 
     @BeforeEach void seed() throws Exception {
@@ -48,6 +49,8 @@ class ScheduleIntegrationTests {
         sessions.deleteAll();
         jdbc.update("DELETE FROM identity_account_skills");
         jdbc.update("DELETE FROM identity_accounts");
+        jdbc.update("DELETE FROM organization_positions");
+        jdbc.update("insert into organization_positions(id,name,normalized_name,active,version) values (?,?,?,true,0)", POSITION_ID, "Thu ngân", "thu ngân");
         admin = save("admin", Role.ADMIN, null);
         manager = save("manager", Role.MANAGER, null);
         otherManager = save("other-manager", Role.MANAGER, null);
@@ -70,7 +73,7 @@ class ScheduleIntegrationTests {
     }
     Map<String, Object> shiftBody(String start, String end, int rest) {
         return Map.of("name", "Ca làm", "startTime", start, "endTime", end, "breakMinutes", rest,
-            "requiredHeadcount", 1, "requiredPosition", "Thu ngân",
+            "requiredHeadcount", 1, "requiredPositionId", POSITION_ID,
             "overnight", java.time.LocalTime.parse(end).isBefore(java.time.LocalTime.parse(start)));
     }
     JsonNode shift(String start, String end, int rest) throws Exception {
@@ -93,7 +96,7 @@ class ScheduleIntegrationTests {
     }
     @Test void createShift_staffingRequirements_persistAndAppearInList() throws Exception {
         var body = new HashMap<>(shiftBody("08:00", "17:00", 60));
-        body.put("requiredHeadcount", 3); body.put("requiredPosition", "  Thu ngân  ");
+        body.put("requiredHeadcount", 3); body.put("requiredPositionId", POSITION_ID);
         var created = json(mvc.perform(post("/api/v1/shift-templates")
             .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
             .content(mapper.writeValueAsString(body))).andExpect(status().isCreated())
@@ -125,7 +128,7 @@ class ScheduleIntegrationTests {
             .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
     }
     @ParameterizedTest
-    @ValueSource(strings = {"requiredHeadcount", "requiredPosition", "overnight"})
+    @ValueSource(strings = {"requiredHeadcount", "requiredPositionId", "overnight"})
     void createShift_missingRequiredField_returns400(String field) throws Exception {
         var body = new HashMap<>(shiftBody("08:00", "17:00", 0)); body.remove(field);
         mvc.perform(post("/api/v1/shift-templates").header("Authorization", "Bearer " + managerToken)
@@ -134,8 +137,8 @@ class ScheduleIntegrationTests {
     }
     @ParameterizedTest
     @ValueSource(strings = {"", "   "})
-    void createShift_blankPosition_returns400(String position) throws Exception {
-        var body = new HashMap<>(shiftBody("08:00", "17:00", 0)); body.put("requiredPosition", position);
+    void createShift_invalidPositionId_returns400(String position) throws Exception {
+        var body = new HashMap<>(shiftBody("08:00", "17:00", 0)); body.put("requiredPositionId", position);
         mvc.perform(post("/api/v1/shift-templates").header("Authorization", "Bearer " + managerToken)
             .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(body)))
             .andExpect(status().isBadRequest());

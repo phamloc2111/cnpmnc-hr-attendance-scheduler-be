@@ -1,6 +1,7 @@
 package com.company.hr.attendance.workschedule.application;
 
 import com.company.hr.attendance.identity.IdentityApi;
+import com.company.hr.attendance.organization.PositionsApi;
 import com.company.hr.attendance.workschedule.api.ScheduleModels.*;
 import com.company.hr.attendance.workschedule.domain.*;
 import com.company.hr.attendance.workschedule.infrastructure.*;
@@ -21,9 +22,10 @@ public class ScheduleService {
     private final ShiftTemplateRepository shifts;
     private final WorkScheduleRepository schedules;
     private final ZoneId zone;
+    private final PositionsApi positions;
     public ScheduleService(IdentityApi identity, ShiftTemplateRepository shifts, WorkScheduleRepository schedules,
-                           @Value("${app.timezone:Asia/Ho_Chi_Minh}") String timezone) {
-        this.identity = identity; this.shifts = shifts; this.schedules = schedules; this.zone = ZoneId.of(timezone);
+                           @Value("${app.timezone:Asia/Ho_Chi_Minh}") String timezone, PositionsApi positions) {
+        this.identity = identity; this.shifts = shifts; this.schedules = schedules; this.zone = ZoneId.of(timezone); this.positions = positions;
     }
     public PageResponse<ShiftResponse> shifts(UUID actorId, int page, int size) {
         management(actorId);
@@ -43,8 +45,9 @@ public class ScheduleService {
             throw new ScheduleException(BAD_REQUEST, "INVALID_OVERNIGHT",
                 "Chỉ đánh dấu ca qua đêm khi giờ kết thúc nhỏ hơn giờ bắt đầu.");
         }
+        var selected = positions.select(request.requiredPositionId(), null);
         return ShiftResponse.from(shifts.save(new ShiftTemplate(request.name().strip(), start, end,
-            request.breakMinutes(), actorId, request.requiredHeadcount(), request.requiredPosition().strip(), request.overnight())));
+            request.breakMinutes(), actorId, request.requiredHeadcount(), selected.name(), selected.id(), request.overnight())));
     }
     public PageResponse<ScheduleResponse> list(UUID actorId, LocalDate from, LocalDate to, UUID employeeId, int page, int size) {
         if (to.isBefore(from) || ChronoUnit.DAYS.between(from, to) > 30) {

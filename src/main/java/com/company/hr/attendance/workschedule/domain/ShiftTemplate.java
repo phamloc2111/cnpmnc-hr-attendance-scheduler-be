@@ -19,13 +19,14 @@ public class ShiftTemplate {
     @Column(nullable = false) private UUID createdBy;
     @Column(nullable = false) private int requiredHeadcount;
     @Column(length = 120) private String requiredPosition;
+    @Column private UUID requiredPositionId;
     @Column(nullable = false) private boolean overnight;
     protected ShiftTemplate() {}
     public ShiftTemplate(String name, LocalTime start, LocalTime end, int breakMinutes, UUID creator,
-                         int requiredHeadcount, String requiredPosition, boolean overnight) {
+                         int requiredHeadcount, String requiredPosition, UUID requiredPositionId, boolean overnight) {
         this.id = UUID.randomUUID(); this.name = name; this.startTime = start; this.endTime = end;
         this.breakMinutes = breakMinutes; this.createdBy = creator;
-        this.requiredHeadcount = requiredHeadcount; this.requiredPosition = requiredPosition; this.overnight = overnight;
+        this.requiredHeadcount = requiredHeadcount; this.requiredPosition = requiredPosition; this.requiredPositionId = requiredPositionId; this.overnight = overnight;
     }
     public UUID getId() { return id; }
     public String getName() { return name; }
@@ -34,5 +35,6 @@ public class ShiftTemplate {
     public int getBreakMinutes() { return breakMinutes; }
     public int getRequiredHeadcount() { return requiredHeadcount; }
     public String getRequiredPosition() { return requiredPosition; }
+    public UUID getRequiredPositionId() { return requiredPositionId; }
     public boolean isOvernight() { return overnight; }
 }
