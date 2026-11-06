@@ -1,6 +1,7 @@
 package com.company.hr.attendance.identity.application;
 
 import com.company.hr.attendance.identity.api.AccountModels.*;
+import com.company.hr.attendance.organization.PositionsApi;
 import com.company.hr.attendance.identity.domain.*;
 import com.company.hr.attendance.identity.infrastructure.*;
 import java.util.*;
@@ -17,11 +18,13 @@ public class AccountService {
     private final AccountRepository accounts;
     private final LoginSessionRepository sessions;
     private final PasswordEncoder passwords;
+    private final PositionsApi positions;
 
-    public AccountService(AccountRepository accounts, LoginSessionRepository sessions, PasswordEncoder passwords) {
+    public AccountService(AccountRepository accounts, LoginSessionRepository sessions, PasswordEncoder passwords, PositionsApi positions) {
         this.accounts = accounts;
         this.sessions = sessions;
         this.passwords = passwords;
+        this.positions = positions;
     }
 
     @Transactional(readOnly = true)
@@ -60,10 +63,12 @@ public class AccountService {
         checkAssignment(actor, request.role(), request.managerId());
         var email = normalizeEmail(request.email());
         uniqueEmail(email, null);
+        var selected = request.role() == Role.EMPLOYEE ? positions.select(request.positionId(), null) : null;
         var account = new Account(email, passwords.encode(request.password()), request.displayName().strip(), request.role());
         account.updateDetails(email, request.displayName().strip(), request.role(),
-            request.role() == Role.EMPLOYEE ? normalizePosition(request.position()) : null,
+            selected == null ? null : selected.name(),
             request.role() == Role.EMPLOYEE ? normalizedSkills(request.skills()) : List.of(), assignedManager(actor, request.role(), request.managerId()));
+        account.setPositionId(selected == null ? null : selected.id());
         return AccountResponse.from(accounts.saveAndFlush(account));
     }
 
@@ -88,11 +93,13 @@ public class AccountService {
         }
         var email = normalizeEmail(request.email());
         uniqueEmail(email, id);
+        var selected = request.role() == Role.EMPLOYEE ? positions.select(request.positionId(), account.getPositionId()) : null;
         boolean identityChanged = account.getRole() != request.role() || !account.getEmail().equals(email);
         account.updateDetails(email, request.displayName().strip(), request.role(),
-            request.role() == Role.EMPLOYEE ? normalizePosition(request.position()) : null,
+            selected == null ? null : selected.name(),
             request.role() == Role.EMPLOYEE ? normalizedSkills(request.skills()) : List.of(), assignedManager(actor, request.role(), request.managerId()));
         if (identityChanged) sessions.deleteByAccountId(id);
+        account.setPositionId(selected == null ? null : selected.id());
         return AccountResponse.from(accounts.saveAndFlush(account));
     }
 
@@ -159,7 +166,6 @@ public class AccountService {
     }
 
     private String normalizeEmail(String email) { return email.strip().toLowerCase(Locale.ROOT); }
-    private String normalizePosition(String value) { return value == null || value.isBlank() ? null : value.strip(); }
     private List<String> normalizedSkills(List<String> input) {
         var result = input.stream().map(String::strip).toList();
         if (result.stream().map(value -> value.toLowerCase(Locale.ROOT)).distinct().count() != result.size()) {

@@ -25,7 +25,7 @@ public class ScheduleExceptionHandler {
         org.springframework.web.bind.MissingServletRequestParameterException.class})
     ResponseEntity<ApiError> validation(Exception error, HttpServletRequest request) {
         return ResponseEntity.badRequest().body(ApiError.of("VALIDATION_ERROR",
-            "Vui lòng kiểm tra tên ca, giờ làm, thời gian nghỉ, nhân viên và khoảng ngày.", request.getRequestURI()));
+            "Vui lòng kiểm tra tên ca, giờ làm, số người cần (ít nhất 1), vị trí cần, ca qua đêm và khoảng ngày.", request.getRequestURI()));
     }
     @ExceptionHandler(DataIntegrityViolationException.class)
     ResponseEntity<ApiError> conflict(Exception error, HttpServletRequest request) {
