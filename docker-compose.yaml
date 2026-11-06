@@ -1,0 +1,18 @@
+services:
+  backend:
+    image: hr-attendance-backend:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - path: .env
+        format: raw
+    environment:
+      SERVER_PORT: "8080"
+      TZ: Asia/Ho_Chi_Minh
+      SPRING_CONFIG_IMPORT: ""
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
