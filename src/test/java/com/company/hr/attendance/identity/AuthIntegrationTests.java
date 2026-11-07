@@ -47,8 +47,12 @@ class AuthIntegrationTests {
     }
 
     private String login(String email) throws Exception {
+        return login(email, PASSWORD);
+    }
+
+    private String login(String email, String password) throws Exception {
         var response = mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
-                .content(mapper.writeValueAsString(Map.of("email", email, "password", PASSWORD))))
+                .content(mapper.writeValueAsString(Map.of("email", email, "password", password))))
             .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"))
             .andExpect(jsonPath("tokenType").value("Bearer"))
             .andExpect(jsonPath("user.passwordHash").doesNotExist()).andReturn();
@@ -120,6 +124,77 @@ class AuthIntegrationTests {
             .andExpect(status().isUnauthorized());
         mvc.perform(get("/api/v1/auth/me").header("Authorization", "Bearer " + second))
             .andExpect(status().isOk());
+    }
+
+    @Test
+    void changePassword_validCurrentAndNewPasswordFrom8Chars_updatesBcryptHashAndRevokesOtherSessions() throws Exception {
+        var currentSession = login("employee@example.com");
+        var otherSession = login("employee@example.com");
+        var newPassword = "NewPass8";
+
+        mvc.perform(post("/api/v1/auth/change-password")
+                .header("Authorization", "Bearer " + currentSession)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.of(
+                    "currentPassword", PASSWORD,
+                    "newPassword", newPassword
+                ))))
+            .andExpect(status().isNoContent());
+
+        var updated = accounts.findByEmail("employee@example.com").orElseThrow();
+        assertThat(updated.getPasswordHash()).startsWith("$2").isNotEqualTo(newPassword);
+        assertThat(passwords.matches(newPassword, updated.getPasswordHash())).isTrue();
+        assertThat(passwords.matches(PASSWORD, updated.getPasswordHash())).isFalse();
+
+        mvc.perform(get("/api/v1/auth/me").header("Authorization", "Bearer " + currentSession))
+            .andExpect(status().isOk());
+        mvc.perform(get("/api/v1/auth/me").header("Authorization", "Bearer " + otherSession))
+            .andExpect(status().isUnauthorized());
+
+        mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.of("email", "employee@example.com", "password", PASSWORD))))
+            .andExpect(status().isUnauthorized());
+        login("employee@example.com", newPassword);
+    }
+
+    @Test
+    void changePassword_wrongCurrentPassword_returnsErrorAndKeepsOldPassword() throws Exception {
+        var token = login("employee@example.com");
+        var originalHash = accounts.findByEmail("employee@example.com").orElseThrow().getPasswordHash();
+
+        mvc.perform(post("/api/v1/auth/change-password")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.of(
+                    "currentPassword", "Wrong-password!",
+                    "newPassword", "NewPass8"
+                ))))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("code").value("INVALID_CURRENT_PASSWORD"))
+            .andExpect(jsonPath("message").value("Mật khẩu cũ không đúng"));
+
+        var unchanged = accounts.findByEmail("employee@example.com").orElseThrow();
+        assertThat(unchanged.getPasswordHash()).isEqualTo(originalHash);
+        login("employee@example.com", PASSWORD);
+    }
+
+    @Test
+    void changePassword_shortNewPassword_returnsValidationErrorAndKeepsOldPassword() throws Exception {
+        var token = login("employee@example.com");
+        var originalHash = accounts.findByEmail("employee@example.com").orElseThrow().getPasswordHash();
+
+        mvc.perform(post("/api/v1/auth/change-password")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.of(
+                    "currentPassword", PASSWORD,
+                    "newPassword", "Short7!"
+                ))))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("code").value("VALIDATION_ERROR"));
+
+        var unchanged = accounts.findByEmail("employee@example.com").orElseThrow();
+        assertThat(unchanged.getPasswordHash()).isEqualTo(originalHash);
     }
 
     @Test
