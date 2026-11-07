@@ -9,6 +9,7 @@ import java.time.Instant;
 import java.util.Locale;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.*;
@@ -66,5 +67,17 @@ public class AuthService {
     @Transactional
     public void logout(Jwt jwt) {
         sessions.deleteById(UUID.fromString(jwt.getId()));
+    }
+
+    @Transactional
+    public void changePassword(Jwt jwt, ChangePasswordRequest request) {
+        var account = accounts.findById(UUID.fromString(jwt.getSubject())).orElseThrow();
+        if (request.currentPassword().getBytes(StandardCharsets.UTF_8).length > 72
+            || !passwords.matches(request.currentPassword(), account.getPasswordHash())) {
+            throw new AccountOperationException(HttpStatus.BAD_REQUEST, "INVALID_CURRENT_PASSWORD", "Mật khẩu cũ không đúng");
+        }
+        account.changePassword(passwords.encode(request.newPassword()));
+        accounts.save(account);
+        sessions.deleteByAccountIdAndIdNot(account.getId(), UUID.fromString(jwt.getId()));
     }
 }

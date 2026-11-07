@@ -16,7 +16,8 @@ public final class AccountModels {
         @NotBlank @Size(min = 12, max = 72) String password,
         @NotBlank @Size(max = 120) String displayName,
         @NotNull Role role,
-        @Size(max = 120) String position,
+        UUID positionId,
+        @Null(message = "Chọn vị trí từ danh mục") String position,
         @NotNull @Size(max = 20) List<@NotBlank @Size(max = 80) String> skills,
         UUID managerId
     ) {
@@ -31,7 +32,8 @@ public final class AccountModels {
         @NotBlank @Email @Size(max = 254) String email,
         @NotBlank @Size(max = 120) String displayName,
         @NotNull Role role,
-        @Size(max = 120) String position,
+        UUID positionId,
+        @Null(message = "Chọn vị trí từ danh mục") String position,
         @NotNull @Size(max = 20) List<@NotBlank @Size(max = 80) String> skills,
         UUID managerId,
         @NotNull @PositiveOrZero Long version
@@ -40,10 +42,10 @@ public final class AccountModels {
     public record LockRequest(@NotNull Boolean locked, @NotNull @PositiveOrZero Long version) {}
 
     public record AccountResponse(UUID id, String email, String displayName, Role role, boolean locked,
-                                  String position, List<String> skills, UUID managerId, long version) {
+                                  String position, UUID positionId, List<String> skills, UUID managerId, long version) {
         public static AccountResponse from(Account account) {
             return new AccountResponse(account.getId(), account.getEmail(), account.getDisplayName(),
-                account.getRole(), account.isLocked(), account.getPosition(), List.copyOf(account.getSkills()),
+                account.getRole(), account.isLocked(), account.getPosition(), account.getPositionId(), List.copyOf(account.getSkills()),
                 account.getManagerId(), account.getVersion());
         }
     }

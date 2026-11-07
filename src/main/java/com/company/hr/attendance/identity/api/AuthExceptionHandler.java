@@ -1,5 +1,6 @@
 package com.company.hr.attendance.identity.api;
 
+import com.company.hr.attendance.identity.application.AccountOperationException;
 import com.company.hr.attendance.identity.application.LoginException;
 import com.company.hr.attendance.shared.api.ApiError;
 import jakarta.servlet.http.HttpServletRequest;
@@ -19,10 +20,19 @@ public class AuthExceptionHandler {
                 exception.getMessage(), request.getRequestURI()));
     }
 
+    @ExceptionHandler(AccountOperationException.class)
+    ResponseEntity<ApiError> operation(AccountOperationException exception, HttpServletRequest request) {
+        return ResponseEntity.status(exception.getStatus())
+            .body(ApiError.of(exception.getCode(), exception.getMessage(), request.getRequestURI()));
+    }
+
     @ExceptionHandler({MethodArgumentNotValidException.class, HttpMessageNotReadableException.class})
     ResponseEntity<ApiError> validation(Exception exception, HttpServletRequest request) {
-        return ResponseEntity.badRequest().body(ApiError.of("VALIDATION_ERROR",
-            "Vui lòng nhập email hợp lệ và mật khẩu (tối đa 72 byte).", request.getRequestURI()));
+        var uri = request.getRequestURI();
+        var message = uri.endsWith("/change-password") || uri.endsWith("/password")
+            ? "Vui lòng nhập mật khẩu cũ và mật khẩu mới từ 8 ký tự (tối đa 72 byte UTF-8)."
+            : "Vui lòng nhập email hợp lệ và mật khẩu (tối đa 72 byte).";
+        return ResponseEntity.badRequest().body(ApiError.of("VALIDATION_ERROR", message, uri));
     }
 
     @ExceptionHandler(AccessDeniedException.class)
