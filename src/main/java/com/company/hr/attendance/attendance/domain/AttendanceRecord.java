@@ -25,6 +25,8 @@ public class AttendanceRecord {
     private Instant recordedAt;
     @Column(nullable = false, length = 2048)
     private String photoUrl;
+    @Column(length = 128)
+    private String photoHash;
     @Column
     private Instant photoCapturedAt;
     @Column(nullable = false, length = 500)
@@ -35,6 +37,15 @@ public class AttendanceRecord {
     private Double deviceLatitude;
     @Column
     private Double deviceLongitude;
+    @Column(length = 128)
+    private String deviceId;
+    @Column(length = 160)
+    private String deviceName;
+    @Column(nullable = false)
+    private boolean mockLocation;
+    @Enumerated(EnumType.STRING)
+    @Column(length = 40)
+    private FraudType fraudType;
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
     private AttendanceStatus status;
@@ -59,9 +70,28 @@ public class AttendanceRecord {
         AttendanceStatus status,
         String verificationNote
     ) {
-        this(UUID.randomUUID(), employeeId, scheduleId, workDate, shiftName, checkType, recordedAt,
-            photoUrl, photoCapturedAt, photoLocation, deviceLocation, deviceLatitude, deviceLongitude,
-            status, verificationNote);
+        this(
+            UUID.randomUUID(),
+            employeeId,
+            scheduleId,
+            workDate,
+            shiftName,
+            checkType,
+            recordedAt,
+            photoUrl,
+            null,
+            photoCapturedAt,
+            photoLocation,
+            deviceLocation,
+            deviceLatitude,
+            deviceLongitude,
+            null,
+            null,
+            false,
+            null,
+            status,
+            verificationNote
+        );
     }
 
     public AttendanceRecord(
@@ -81,7 +111,98 @@ public class AttendanceRecord {
         AttendanceStatus status,
         String verificationNote
     ) {
-        this.id = id;
+        this(
+            id,
+            employeeId,
+            scheduleId,
+            workDate,
+            shiftName,
+            checkType,
+            recordedAt,
+            photoUrl,
+            null,
+            photoCapturedAt,
+            photoLocation,
+            deviceLocation,
+            deviceLatitude,
+            deviceLongitude,
+            null,
+            null,
+            false,
+            null,
+            status,
+            verificationNote
+        );
+    }
+
+    public AttendanceRecord(
+        UUID employeeId,
+        UUID scheduleId,
+        LocalDate workDate,
+        String shiftName,
+        AttendanceType checkType,
+        Instant recordedAt,
+        String photoUrl,
+        String photoHash,
+        Instant photoCapturedAt,
+        String photoLocation,
+        String deviceLocation,
+        Double deviceLatitude,
+        Double deviceLongitude,
+        String deviceId,
+        String deviceName,
+        boolean mockLocation,
+        FraudType fraudType,
+        AttendanceStatus status,
+        String verificationNote
+    ) {
+        this(
+            UUID.randomUUID(),
+            employeeId,
+            scheduleId,
+            workDate,
+            shiftName,
+            checkType,
+            recordedAt,
+            photoUrl,
+            photoHash,
+            photoCapturedAt,
+            photoLocation,
+            deviceLocation,
+            deviceLatitude,
+            deviceLongitude,
+            deviceId,
+            deviceName,
+            mockLocation,
+            fraudType,
+            status,
+            verificationNote
+        );
+    }
+
+    public AttendanceRecord(
+        UUID id,
+        UUID employeeId,
+        UUID scheduleId,
+        LocalDate workDate,
+        String shiftName,
+        AttendanceType checkType,
+        Instant recordedAt,
+        String photoUrl,
+        String photoHash,
+        Instant photoCapturedAt,
+        String photoLocation,
+        String deviceLocation,
+        Double deviceLatitude,
+        Double deviceLongitude,
+        String deviceId,
+        String deviceName,
+        boolean mockLocation,
+        FraudType fraudType,
+        AttendanceStatus status,
+        String verificationNote
+    ) {
+        this.id = id != null ? id : UUID.randomUUID();
         this.employeeId = employeeId;
         this.scheduleId = scheduleId;
         this.workDate = workDate;
@@ -89,11 +210,16 @@ public class AttendanceRecord {
         this.checkType = checkType;
         this.recordedAt = recordedAt != null ? recordedAt : Instant.now();
         this.photoUrl = photoUrl.strip();
+        this.photoHash = photoHash == null || photoHash.isBlank() ? null : photoHash.strip();
         this.photoCapturedAt = photoCapturedAt;
         this.photoLocation = photoLocation.strip();
         this.deviceLocation = deviceLocation.strip();
         this.deviceLatitude = deviceLatitude;
         this.deviceLongitude = deviceLongitude;
+        this.deviceId = deviceId == null || deviceId.isBlank() ? null : deviceId.strip();
+        this.deviceName = deviceName == null || deviceName.isBlank() ? null : deviceName.strip();
+        this.mockLocation = mockLocation;
+        this.fraudType = fraudType;
         this.status = status;
         this.verificationNote = verificationNote == null || verificationNote.isBlank() ? null : verificationNote.strip();
     }
@@ -106,12 +232,17 @@ public class AttendanceRecord {
     public AttendanceType getCheckType() { return checkType; }
     public Instant getRecordedAt() { return recordedAt; }
     public String getPhotoUrl() { return photoUrl; }
+    public String getPhotoHash() { return photoHash; }
     public Instant getPhotoCapturedAt() { return photoCapturedAt; }
     public String getPositionOnPhoto() { return photoLocation; }
     public String getPhotoLocation() { return photoLocation; }
     public String getDeviceLocation() { return deviceLocation; }
     public Double getDeviceLatitude() { return deviceLatitude; }
     public Double getDeviceLongitude() { return deviceLongitude; }
+    public String getDeviceId() { return deviceId; }
+    public String getDeviceName() { return deviceName; }
+    public boolean isMockLocation() { return mockLocation; }
+    public FraudType getFraudType() { return fraudType; }
     public AttendanceStatus getStatus() { return status; }
     public String getVerificationNote() { return verificationNote; }
 }

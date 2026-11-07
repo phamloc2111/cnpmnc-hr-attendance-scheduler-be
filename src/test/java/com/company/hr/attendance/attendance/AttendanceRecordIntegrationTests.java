@@ -56,6 +56,7 @@ class AttendanceRecordIntegrationTests {
 
     @AfterEach
     void cleanup() {
+        jdbc.update("DELETE FROM attendance_registered_devices");
         attendanceRecords.deleteAll();
         sessions.deleteAll();
         jdbc.update("UPDATE identity_accounts SET manager_id = NULL");
@@ -204,5 +205,201 @@ class AttendanceRecordIntegrationTests {
                     "status", "ON_TIME"
                 ))))
             .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void antiFraud_rejectsStalePhotoWhenTimestampDeviatesBeyondThreshold() throws Exception {
+        var employeeToken = login(employee);
+        var recordedAt = Instant.parse("2026-11-07T01:10:00Z");
+        var stalePhotoTime = Instant.parse("2026-11-07T00:55:00Z"); // 15 minutes old (> 5m threshold)
+
+        mvc.perform(post("/api/v1/attendance-records")
+                .header("Authorization", "Bearer " + employeeToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.ofEntries(
+                    Map.entry("workDate", "2026-11-07"),
+                    Map.entry("shiftName", "Ca sáng"),
+                    Map.entry("checkType", "CHECK_IN"),
+                    Map.entry("recordedAt", recordedAt.toString()),
+                    Map.entry("photoUrl", "https://example.com/timemark/old-photo.jpg"),
+                    Map.entry("photoCapturedAt", stalePhotoTime.toString()),
+                    Map.entry("photoLocation", "268 Lý Thường Kiệt, Quận 10"),
+                    Map.entry("deviceLocation", "268 Lý Thường Kiệt, Quận 10"),
+                    Map.entry("status", "ON_TIME")
+                ))))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("code").value("STALE_PHOTO"));
+    }
+
+    @Test
+    void antiFraud_rejectsReusedPhotoFromPreviousTurn() throws Exception {
+        var employeeToken = login(employee);
+        var now = Instant.parse("2026-11-07T01:00:00Z");
+
+        mvc.perform(post("/api/v1/attendance-records")
+                .header("Authorization", "Bearer " + employeeToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.ofEntries(
+                    Map.entry("workDate", "2026-11-07"),
+                    Map.entry("shiftName", "Ca sáng"),
+                    Map.entry("checkType", "CHECK_IN"),
+                    Map.entry("recordedAt", now.toString()),
+                    Map.entry("photoUrl", "https://example.com/timemark/unique-1.jpg"),
+                    Map.entry("photoHash", "sha256-photo-hash-001"),
+                    Map.entry("photoCapturedAt", now.toString()),
+                    Map.entry("photoLocation", "268 Lý Thường Kiệt, Quận 10"),
+                    Map.entry("deviceLocation", "268 Lý Thường Kiệt, Quận 10"),
+                    Map.entry("status", "ON_TIME")
+                ))))
+            .andExpect(status().isCreated());
+
+        mvc.perform(post("/api/v1/attendance-records")
+                .header("Authorization", "Bearer " + employeeToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.ofEntries(
+                    Map.entry("workDate", "2026-11-07"),
+                    Map.entry("shiftName", "Ca sáng"),
+                    Map.entry("checkType", "CHECK_OUT"),
+                    Map.entry("recordedAt", now.plusSeconds(3600).toString()),
+                    Map.entry("photoUrl", "https://example.com/timemark/reused-copy.jpg"),
+                    Map.entry("photoHash", "sha256-photo-hash-001"),
+                    Map.entry("photoCapturedAt", now.plusSeconds(3600).toString()),
+                    Map.entry("photoLocation", "268 Lý Thường Kiệt, Quận 10"),
+                    Map.entry("deviceLocation", "268 Lý Thường Kiệt, Quận 10"),
+                    Map.entry("status", "ON_TIME")
+                ))))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("code").value("DUPLICATE_PHOTO"));
+    }
+
+    @Test
+    void antiFraud_rejectsFakeLocationAndSavesAlertForManager() throws Exception {
+        var employeeToken = login(employee);
+        var managerToken = login(manager);
+        var now = Instant.parse("2026-11-07T01:00:00Z");
+
+        mvc.perform(post("/api/v1/attendance-records")
+                .header("Authorization", "Bearer " + employeeToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.ofEntries(
+                    Map.entry("workDate", "2026-11-07"),
+                    Map.entry("shiftName", "Ca sáng"),
+                    Map.entry("checkType", "CHECK_IN"),
+                    Map.entry("recordedAt", now.toString()),
+                    Map.entry("photoUrl", "https://example.com/timemark/fake-gps.jpg"),
+                    Map.entry("photoCapturedAt", now.toString()),
+                    Map.entry("photoLocation", "268 Lý Thường Kiệt, Quận 10"),
+                    Map.entry("deviceLocation", "Fake GPS Spoofer"),
+                    Map.entry("mockLocation", true),
+                    Map.entry("status", "ON_TIME")
+                ))))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("code").value("FAKE_LOCATION"));
+
+        mvc.perform(get("/api/v1/attendance-records")
+                .header("Authorization", "Bearer " + managerToken)
+                .param("status", "REJECTED"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("totalElements").value(1))
+            .andExpect(jsonPath("items[0].fraudType").value("FAKE_LOCATION"))
+            .andExpect(jsonPath("items[0].mockLocation").value(true));
+    }
+
+    @Test
+    void antiFraud_enforcesSingleRegisteredDeviceAndAllowsManagerRebind() throws Exception {
+        var employeeToken = login(employee);
+        var managerToken = login(manager);
+        var now = Instant.parse("2026-11-07T01:00:00Z");
+
+        mvc.perform(post("/api/v1/attendance-records")
+                .header("Authorization", "Bearer " + employeeToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.ofEntries(
+                    Map.entry("workDate", "2026-11-07"),
+                    Map.entry("shiftName", "Ca sáng"),
+                    Map.entry("checkType", "CHECK_IN"),
+                    Map.entry("recordedAt", now.toString()),
+                    Map.entry("photoUrl", "https://example.com/timemark/dev-1.jpg"),
+                    Map.entry("photoCapturedAt", now.toString()),
+                    Map.entry("photoLocation", "268 Lý Thường Kiệt, Quận 10"),
+                    Map.entry("deviceLocation", "268 Lý Thường Kiệt, Quận 10"),
+                    Map.entry("deviceId", "device-iphone-14"),
+                    Map.entry("deviceName", "iPhone 14 của An"),
+                    Map.entry("status", "ON_TIME")
+                ))))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("deviceId").value("device-iphone-14"));
+
+        mvc.perform(post("/api/v1/attendance-records")
+                .header("Authorization", "Bearer " + employeeToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.ofEntries(
+                    Map.entry("workDate", "2026-11-07"),
+                    Map.entry("shiftName", "Ca sáng"),
+                    Map.entry("checkType", "CHECK_OUT"),
+                    Map.entry("recordedAt", now.plusSeconds(3600).toString()),
+                    Map.entry("photoUrl", "https://example.com/timemark/dev-2.jpg"),
+                    Map.entry("photoCapturedAt", now.plusSeconds(3600).toString()),
+                    Map.entry("photoLocation", "268 Lý Thường Kiệt, Quận 10"),
+                    Map.entry("deviceLocation", "268 Lý Thường Kiệt, Quận 10"),
+                    Map.entry("deviceId", "device-samsung-s24"),
+                    Map.entry("deviceName", "Samsung S24 mới"),
+                    Map.entry("status", "ON_TIME")
+                ))))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("code").value("UNREGISTERED_DEVICE"));
+
+        mvc.perform(put("/api/v1/attendance-records/devices/" + employee.getId())
+                .header("Authorization", "Bearer " + managerToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.of(
+                    "deviceId", "device-samsung-s24",
+                    "deviceName", "Samsung S24 mới"
+                ))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("deviceId").value("device-samsung-s24"));
+
+        mvc.perform(post("/api/v1/attendance-records")
+                .header("Authorization", "Bearer " + employeeToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.ofEntries(
+                    Map.entry("workDate", "2026-11-07"),
+                    Map.entry("shiftName", "Ca sáng"),
+                    Map.entry("checkType", "CHECK_OUT"),
+                    Map.entry("recordedAt", now.plusSeconds(3660).toString()),
+                    Map.entry("photoUrl", "https://example.com/timemark/dev-3.jpg"),
+                    Map.entry("photoCapturedAt", now.plusSeconds(3660).toString()),
+                    Map.entry("photoLocation", "268 Lý Thường Kiệt, Quận 10"),
+                    Map.entry("deviceLocation", "268 Lý Thường Kiệt, Quận 10"),
+                    Map.entry("deviceId", "device-samsung-s24"),
+                    Map.entry("deviceName", "Samsung S24 mới"),
+                    Map.entry("status", "ON_TIME")
+                ))))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("deviceId").value("device-samsung-s24"));
+    }
+
+    @Test
+    void antiFraud_rejectsContinuousTracking() throws Exception {
+        var employeeToken = login(employee);
+        var now = Instant.parse("2026-11-07T01:00:00Z");
+
+        mvc.perform(post("/api/v1/attendance-records")
+                .header("Authorization", "Bearer " + employeeToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.ofEntries(
+                    Map.entry("workDate", "2026-11-07"),
+                    Map.entry("shiftName", "Ca sáng"),
+                    Map.entry("checkType", "CHECK_IN"),
+                    Map.entry("recordedAt", now.toString()),
+                    Map.entry("photoUrl", "https://example.com/timemark/track.jpg"),
+                    Map.entry("photoCapturedAt", now.toString()),
+                    Map.entry("photoLocation", "268 Lý Thường Kiệt, Quận 10"),
+                    Map.entry("deviceLocation", "268 Lý Thường Kiệt, Quận 10"),
+                    Map.entry("continuousTracking", true),
+                    Map.entry("status", "ON_TIME")
+                ))))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("code").value("CONTINUOUS_TRACKING_FORBIDDEN"));
     }
 }
