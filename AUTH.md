@@ -1,4 +1,4 @@
-# SS-12 / SS-13 — Đăng nhập và phân quyền
+# SS-12 / SS-13 / SS-14 — Đăng nhập, phân quyền và đổi mật khẩu
 
 Module `identity`, dùng chung cho web và mobile. Ba role duy nhất: `EMPLOYEE`, `MANAGER`, `ADMIN`.
 
@@ -35,13 +35,14 @@ Module `identity`, dùng chung cho web và mobile. Ba role duy nhất: `EMPLOYEE
 
 ## API
 
-Prefix `/api/v1`. Gửi `Content-Type: application/json` khi đăng nhập.
+Prefix `/api/v1`. Gửi `Content-Type: application/json` khi đăng nhập hoặc đổi mật khẩu.
 
 | Method | Path | Quyền | Kết quả |
 |---|---|---|---|
 | POST | `/auth/login` | Công khai | JWT và người dùng |
 | GET | `/auth/me` | Đã đăng nhập | Người dùng hiện tại từ DB |
 | POST | `/auth/logout` | Đã đăng nhập | 204, thu hồi phiên hiện tại |
+| POST | `/auth/change-password` | Đã đăng nhập | 204, đổi mật khẩu BCrypt và thu hồi các phiên khác |
 | GET | `/workspaces/employee` | EMPLOYEE | Nội dung trang đầu nhân viên |
 | GET | `/workspaces/management` | MANAGER, ADMIN | Nội dung trang đầu quản lý |
 | GET | `/workspaces/administration` | ADMIN | Nội dung trang đầu quản trị |
@@ -52,7 +53,16 @@ Request đăng nhập:
 {"email":"user@example.com","password":"your-password"}
 ```
 
-Response 200 (giá trị minh họa):
+Request đổi mật khẩu (`POST /api/v1/auth/change-password`):
+
+```json
+{"currentPassword":"current-password","newPassword":"new-password-min-8"}
+```
+
+- `newPassword` yêu cầu ít nhất 8 ký tự và tối đa 72 byte UTF-8. Mật khẩu mới được băm bằng BCrypt trước khi lưu.
+- Nhập sai `currentPassword` trả 400 `INVALID_CURRENT_PASSWORD` cùng thông báo `Mật khẩu cũ không đúng` và không thay đổi mật khẩu.
+
+Response 200 khi đăng nhập (giá trị minh họa):
 
 ```json
 {
@@ -76,12 +86,12 @@ Sai email hoặc mật khẩu trả 401 cùng thông báo `Email hoặc mật kh
 {"code":"FORBIDDEN","message":"Bạn không có quyền truy cập chức năng này","timestamp":"2026-11-04T13:00:00Z","path":"/api/v1/workspaces/administration"}
 ```
 
-Mỗi request xác minh chữ ký, hạn JWT, phiên còn hiệu lực, tài khoản chưa bị khóa và role trong JWT vẫn khớp DB. Đăng xuất thu hồi riêng phiên hiện tại; các phiên khác không bị ảnh hưởng. Khóa tài khoản hoặc đổi role làm token cũ không còn dùng được. Các API nghiệp vụ bổ sung sau này phải khai báo quyền ở backend, và giới hạn dữ liệu theo phạm vi phụ trách khi nghiệp vụ đó được triển khai.
+Mỗi request xác minh chữ ký, hạn JWT, phiên còn hiệu lực, tài khoản chưa bị khóa và role trong JWT vẫn khớp DB. Đăng xuất thu hồi riêng phiên hiện tại; các phiên khác không bị ảnh hưởng. Đổi mật khẩu giữ phiên hiện tại và thu hồi các phiên khác của cùng tài khoản. Khóa tài khoản hoặc đổi role làm token cũ không còn dùng được. Các API nghiệp vụ bổ sung sau này phải khai báo quyền ở backend, và giới hạn dữ liệu theo phạm vi phụ trách khi nghiệp vụ đó được triển khai.
 
 ## Web và mobile
 
-- Web: `cd fe`, `npm install`, `npm run dev`. `VITE_API_BASE_URL` mặc định `http://localhost:8080` (không có `/api/v1`). Token lưu `sessionStorage`, khôi phục sau reload trong cùng tab và xác minh lại bằng `/auth/me`. Đăng xuất xóa token và về đăng nhập.
-- Mobile: `cd mobile`, `flutter pub get`, `flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8080/api/v1` cho emulator Android. iOS simulator dùng `http://localhost:8080/api/v1`; thiết bị thật dùng địa chỉ backend mà thiết bị truy cập được. Token lưu bằng `flutter_secure_storage`. Bản Android debug cho phép HTTP local; bản triển khai dùng HTTPS. iOS local HTTP cần cấu hình ATS phù hợp trong môi trường phát triển hoặc dùng HTTPS.
+- Web: `cd fe`, `npm install`, `npm run dev`. `VITE_API_BASE_URL` mặc định `http://localhost:8080` (không có `/api/v1`). Token lưu `sessionStorage`, khôi phục sau reload trong cùng tab và xác minh lại bằng `/auth/me`. Đăng xuất xóa token và về đăng nhập. Người dùng đã đăng nhập có thể bấm **Đổi mật khẩu** trên thanh công cụ để cập nhật mật khẩu.
+- Mobile: `cd mobile`, `flutter pub get`, `flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8080/api/v1` cho emulator Android. iOS simulator dùng `http://localhost:8080/api/v1`; thiết bị thật dùng địa chỉ backend mà thiết bị truy cập được. Token lưu bằng `flutter_secure_storage`. Bản Android debug cho phép HTTP local; bản triển khai dùng HTTPS. iOS local HTTP cần cấu hình ATS phù hợp trong môi trường phát triển hoặc dùng HTTPS. Người dùng đã đăng nhập có thể chọn **Đổi mật khẩu** từ thanh ứng dụng hoặc menu ngăn kéo.
 - Mỗi role vào trang đầu riêng; ADMIN được mở thêm không gian quản lý. Menu tài khoản/cài đặt chỉ hiện cho ADMIN. Các chức năng chưa triển khai được đánh dấu `Sắp có` và vô hiệu hóa.
 - Khi backend trả 401, ứng dụng xóa phiên và về đăng nhập. Khi mất mạng lúc khôi phục phiên, ứng dụng giữ token để thử lại. Khi đăng xuất lúc mất mạng, ứng dụng xóa token cục bộ và thông báo chưa xác nhận thu hồi trên máy chủ; JWT còn hiệu lực ở máy chủ cho đến khi hết hạn.
 
@@ -98,4 +108,4 @@ flutter analyze
 flutter test
 ```
 
-Backend test dùng H2 ở chế độ PostgreSQL, chạy Flyway V1/V2 và validate entity; không kết nối PostgreSQL/NeonDB thật. Kiểm thử bao gồm ma trận quyền ba role, sai mật khẩu, tài khoản bị khóa, token hết hạn/bị sửa/bị thu hồi, thay đổi role, CORS và đăng xuất từng phiên. H2 chưa thay thế kiểm thử migration trên PostgreSQL thật.
+Backend test dùng H2 ở chế độ PostgreSQL, chạy Flyway V1/V2 và validate entity; không kết nối PostgreSQL/NeonDB thật. Kiểm thử bao gồm ma trận quyền ba role, sai mật khẩu, tài khoản bị khóa, đổi mật khẩu (BCrypt, sai mật khẩu cũ, mật khẩu mới dưới 8 ký tự), token hết hạn/bị sửa/bị thu hồi, thay đổi role, CORS và đăng xuất từng phiên. H2 chưa thay thế kiểm thử migration trên PostgreSQL thật.

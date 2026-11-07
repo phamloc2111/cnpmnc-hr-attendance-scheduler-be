@@ -31,4 +31,10 @@ public class AuthController {
         auth.logout(jwt);
         return ResponseEntity.noContent().build();
     }
+
+    @RequestMapping(path = {"/change-password", "/password"}, method = {RequestMethod.POST, RequestMethod.PUT})
+    public ResponseEntity<Void> changePassword(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody ChangePasswordRequest request) {
+        auth.changePassword(jwt, request);
+        return ResponseEntity.noContent().build();
+    }
 }

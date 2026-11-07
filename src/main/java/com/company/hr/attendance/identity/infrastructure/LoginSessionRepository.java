@@ -8,4 +8,5 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface LoginSessionRepository extends JpaRepository<LoginSession, UUID> {
     void deleteByExpiresAtBefore(Instant now);
     void deleteByAccountId(UUID accountId);
+    void deleteByAccountIdAndIdNot(UUID accountId, UUID id);
 }

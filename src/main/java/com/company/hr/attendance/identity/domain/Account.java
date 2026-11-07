@@ -76,4 +76,5 @@ public class Account {
     }
     public void setLocked(boolean locked) { this.locked = locked; }
     public void setRole(Role role) { this.role = role; }
+    public void changePassword(String passwordHash) { this.passwordHash = passwordHash; }
 }
