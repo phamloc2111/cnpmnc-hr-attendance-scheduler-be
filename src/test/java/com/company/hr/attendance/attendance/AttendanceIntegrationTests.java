@@ -98,7 +98,9 @@ class AttendanceIntegrationTests {
                 new byte[]{(byte) 0xff, (byte) 0xd8, (byte) 0xff, 1}))
             .param("scheduleId", id.toString()).param("type", "CHECK_IN");
         if (location) request.param("locatedAt", Instant.now().toString())
-            .param("latitude", "10.0").param("longitude", "106.0").param("accuracyMeters", "5.0");
+            .param("latitude", "10.7726").param("longitude", "106.6579").param("accuracyMeters", "5.0")
+            .param("timemarkCapturedAt", Instant.now().toString())
+            .param("timemarkLatitude", "10.7726").param("timemarkLongitude", "106.6579");
         return request;
     }
     @Test void uploadIsPrivateUniqueAndResultsIncludeAbsence() throws Exception {

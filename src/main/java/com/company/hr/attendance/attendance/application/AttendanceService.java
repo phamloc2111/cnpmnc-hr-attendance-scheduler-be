@@ -30,20 +30,27 @@ public class AttendanceService {
     private final AttendanceRecordRepository records;
     private final WorkScheduleApi schedules;
     private final IdentityApi identity;
+    private final TimemarkReader timemarkReader;
+    private final AttendanceVerificationService verification;
     private final int graceMinutes;
     public AttendanceService(AttendanceEventRepository events, AttendanceRecordRepository records,
-                             WorkScheduleApi schedules, IdentityApi identity,
+                             WorkScheduleApi schedules, IdentityApi identity, TimemarkReader timemarkReader,
+                             AttendanceVerificationService verification,
                              @Value("${app.attendance.grace-minutes:5}") int graceMinutes) {
         this.events = events; this.records = records; this.schedules = schedules; this.identity = identity;
+        this.timemarkReader = timemarkReader; this.verification = verification;
         this.graceMinutes = graceMinutes;
     }
 
+    public TimemarkAnalysisResponse analyzeTimemark(MultipartFile image) { return timemarkReader.read(image); }
+
     @Transactional
     public EventResponse record(UUID actorId, UUID scheduleId, EventType type, Instant locatedAt,
-                                Double latitude, Double longitude, Double accuracy, MultipartFile photo) {
+                                Double latitude, Double longitude, Double accuracy,
+                                TimemarkEvidence timemark, MultipartFile photo) {
         var actor = identity.person(actorId);
         if (actor.locked() || !actor.role().equals("EMPLOYEE")) throw forbidden();
-        if (scheduleId == null || type == null || locatedAt == null || latitude == null || longitude == null || accuracy == null)
+        if (scheduleId == null || type == null || locatedAt == null || latitude == null || longitude == null || accuracy == null || timemark == null)
             throw invalid("Cần chọn ca, lượt vào/ra và cấp vị trí hiện tại khi gửi ảnh.");
         if (!Double.isFinite(latitude) || latitude < -90 || latitude > 90 ||
             !Double.isFinite(longitude) || longitude < -180 || longitude > 180 ||
@@ -53,6 +60,7 @@ public class AttendanceService {
         if (locatedAt.isAfter(receivedAt.plusSeconds(30)) ||
             Duration.between(locatedAt, receivedAt).compareTo(Duration.ofMinutes(2)) > 0)
             throw invalid("Vị trí đã cũ. Hãy bật định vị và gửi lại ảnh.");
+        verification.verify(latitude, longitude, timemark, receivedAt);
         if (photo == null || photo.isEmpty() || photo.getSize() > MAX_PHOTO_BYTES)
             throw invalid("Ảnh Timemark phải có dung lượng từ 1 byte đến 5 MB.");
         byte[] bytes;
@@ -87,9 +95,10 @@ public class AttendanceService {
                 ? AttendanceStatus.EARLY_LEAVE : AttendanceStatus.ON_TIME);
         records.saveAndFlush(new AttendanceRecord(id, actorId, scheduleId, schedule.workDate(), schedule.name(),
             AttendanceType.valueOf(type.name()), receivedAt,
-            "/api/v1/attendance/events/" + id + "/photo", null, "Chưa xác minh từ ảnh",
+            "/api/v1/attendance/events/" + id + "/photo", timemark.capturedAt(),
+            timemark.latitude() + ", " + timemark.longitude(),
             latitude + ", " + longitude, latitude, longitude, status,
-            "Ảnh Timemark chưa được đối chiếu với vị trí GPS."));
+            "Đã đối chiếu ảnh Timemark với vị trí GPS."));
         return new EventResponse(id, scheduleId, type, receivedAt, locatedAt, latitude, longitude, accuracy,
             "/api/v1/attendance/events/" + id + "/photo");
     }

@@ -38,10 +38,21 @@ public class AttendanceController {
         @RequestParam UUID scheduleId, @RequestParam EventType type,
         @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant locatedAt,
         @RequestParam Double latitude, @RequestParam Double longitude,
-        @RequestParam Double accuracyMeters, @RequestParam MultipartFile photo) {
+        @RequestParam Double accuracyMeters,
+        @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant timemarkCapturedAt,
+        @RequestParam Double timemarkLatitude, @RequestParam Double timemarkLongitude,
+        @RequestParam MultipartFile photo) {
         var result = service.record(UUID.fromString(jwt.getSubject()), scheduleId, type,
-            locatedAt, latitude, longitude, accuracyMeters, photo);
+            locatedAt, latitude, longitude, accuracyMeters,
+            new TimemarkEvidence(timemarkCapturedAt, timemarkLatitude, timemarkLongitude), photo);
         return ResponseEntity.created(URI.create("/api/v1/attendance/events/" + result.id())).body(result);
+    }
+
+    /** Reads the timestamp and location overlay only; the uploaded image is not persisted here. */
+    @PostMapping(value = "/timemark-analysis", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasAnyRole('EMPLOYEE','MANAGER','ADMIN')")
+    public TimemarkAnalysisResponse analyzeTimemark(@RequestPart("image") MultipartFile image) {
+        return service.analyzeTimemark(image);
     }
 
     @GetMapping("/events")
