@@ -7,6 +7,7 @@ import com.company.hr.attendance.attendance.application.AttendanceService;
 import com.company.hr.attendance.attendance.application.AttendanceVerificationService;
 import com.company.hr.attendance.attendance.application.TimemarkReader;
 import com.company.hr.attendance.attendance.infrastructure.AttendanceEventRepository;
+import com.company.hr.attendance.attendance.infrastructure.AttendanceRecordRepository;
 import com.company.hr.attendance.identity.IdentityApi;
 import com.company.hr.attendance.workschedule.WorkScheduleApi;
 import java.time.Instant;
@@ -21,11 +22,13 @@ import static org.mockito.Mockito.*;
 
 class AttendanceServiceTest {
     private final AttendanceEventRepository events = mock(AttendanceEventRepository.class);
+    private final AttendanceRecordRepository records = mock(AttendanceRecordRepository.class);
     private final WorkScheduleApi schedules = mock(WorkScheduleApi.class);
     private final IdentityApi identity = mock(IdentityApi.class);
     private final TimemarkReader timemarkReader = mock(TimemarkReader.class);
     private final AttendanceVerificationService verification = new AttendanceVerificationService(10.0, 106.0, 100, 300);
-    private final AttendanceService service = new AttendanceService(events, schedules, identity, timemarkReader, verification);
+    private final AttendanceService service = new AttendanceService(
+        events, records, schedules, identity, timemarkReader, verification, 5);
     private final UUID employee = UUID.randomUUID();
     private final UUID scheduleId = UUID.randomUUID();
     private final MockMultipartFile image = new MockMultipartFile("photo", "timemark.jpg", "image/jpeg",

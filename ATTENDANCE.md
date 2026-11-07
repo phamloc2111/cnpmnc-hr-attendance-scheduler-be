@@ -44,6 +44,14 @@ Tất cả endpoint dưới `/api/v1`, yêu cầu Bearer JWT.
 
 Khoảng ngày tối đa 31 ngày, bao gồm hai đầu. Kết quả bảng công phân trang và trả `arrival`, `departure`, `overall`, `lateMinutes`, `earlyMinutes` cùng giờ vào/ra.
 
+## Tích hợp SYNC-24
+
+`GET /api/v1/attendance-records` và `GET /api/v1/attendance-records/{id}` giữ hợp đồng xem từng lượt của SYNC-24. Khi nhân viên gửi ảnh qua `/attendance/events`, cùng transaction sẽ tạo bản ghi xem kết quả với cùng ID, ảnh riêng tư và tọa độ GPS. Trạng thái lượt vào/ra lấy từ giờ máy chủ và ngưỡng `ATTENDANCE_GRACE_MINUTES`; vị trí/giờ trên ảnh để trống hoặc ghi rõ chưa xác minh cho đến SYNC-20/21. `POST /attendance-records` chỉ dành cho quản lý/quản trị để nhập bản ghi thủ công, không thay thế luồng tải ảnh của nhân viên.
+
+Flyway V8 tạo `attendance_records` và nhập các lượt đã có trong `attendance_events`. Phần nhập dữ liệu cũ dùng ngưỡng mặc định 5 phút. V7 của nhánh `dev` (`attendance_events`) được giữ nguyên. Nếu một môi trường đã chạy V7 khác từ `main` (`attendance_records`), cần kiểm tra lịch sử Flyway và kế hoạch di chuyển dữ liệu trước khi triển khai bản hòa giải; không chạy `repair` tự động.
+
+`photoUrl` của bản ghi tự động trỏ tới API ảnh yêu cầu Bearer JWT. Web cần tải ảnh với token rồi dùng blob URL; thẻ `<img>` gọi trực tiếp URL sẽ không mang token.
+
 ## Giới hạn hiện tại
 
 Ảnh được lưu và gắn vị trí lúc gửi, nhưng chưa đọc giờ/vị trí từ nội dung ảnh và chưa so khớp với GPS. Đó là phạm vi SYNC-20 và SYNC-21. GPS của trình duyệt là dữ liệu do client gửi, chưa có cơ chế chứng thực độc lập chống giả mạo. Trạng thái được tính từ thời điểm máy chủ nhận ảnh nên chỉ nên dùng làm kết quả sơ bộ trước bước xác minh ảnh.
