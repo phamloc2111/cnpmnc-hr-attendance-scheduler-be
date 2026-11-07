@@ -41,12 +41,12 @@ public final class ScheduleModels {
     }
     public record ScheduleResponse(UUID id, UUID employeeId, String employeeName, UUID shiftTemplateId,
         LocalDate workDate, String shiftName, Instant startsAt, Instant endsAt, int breakMinutes,
-        long workingMinutes, String timezone) {
-        public static ScheduleResponse from(WorkSchedule schedule, String name) {
+        long workingMinutes, String timezone, String requiredPosition) {
+        public static ScheduleResponse from(WorkSchedule schedule, String name, String requiredPosition) {
             return new ScheduleResponse(schedule.getId(), schedule.getEmployeeId(), name, schedule.getShiftTemplateId(),
                 schedule.getWorkDate(), schedule.getShiftName(), schedule.getStartsAt(), schedule.getEndsAt(),
                 schedule.getBreakMinutes(), Duration.between(schedule.getStartsAt(), schedule.getEndsAt()).toMinutes()
-                    - schedule.getBreakMinutes(), schedule.getTimezone());
+                    - schedule.getBreakMinutes(), schedule.getTimezone(), requiredPosition);
         }
     }
     public record PageResponse<T>(List<T> items, int page, int size, long totalElements, int totalPages) {

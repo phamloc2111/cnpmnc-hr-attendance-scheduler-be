@@ -71,8 +71,11 @@ public class ScheduleService {
         if (employeeId != null) filter = filter.and((root, ignored, cb) -> cb.equal(root.get("employeeId"), employeeId));
         var result = schedules.findAll(filter, PageRequest.of(page, size, Sort.by("workDate", "startsAt", "id")));
         var names = identity.names(result.stream().map(WorkSchedule::getEmployeeId).distinct().toList());
+        var positionNames = new HashMap<UUID, String>();
+        shifts.findAllById(result.stream().map(WorkSchedule::getShiftTemplateId).distinct().toList())
+            .forEach(shift -> positionNames.put(shift.getId(), shift.getRequiredPosition()));
         return PageResponse.from(result.map(schedule -> ScheduleResponse.from(schedule,
-            names.getOrDefault(schedule.getEmployeeId(), "Nhân viên"))));
+            names.getOrDefault(schedule.getEmployeeId(), "Nhân viên"), positionNames.get(schedule.getShiftTemplateId()))));
     }
     @Transactional
     public ScheduleResponse assign(UUID actorId, AssignShift request) {
@@ -88,7 +91,7 @@ public class ScheduleService {
             employee.id(), schedule.getEndsAt(), schedule.getStartsAt())) {
             throw new ScheduleException(CONFLICT, "SCHEDULE_OVERLAP", "Nhân viên đã có ca trùng giờ, kể cả ca từ ngày trước.");
         }
-        return ScheduleResponse.from(schedules.saveAndFlush(schedule), employee.name());
+        return ScheduleResponse.from(schedules.saveAndFlush(schedule), employee.name(), shift.getRequiredPosition());
     }
     @Transactional
     public void cancel(UUID actorId, UUID id) {
