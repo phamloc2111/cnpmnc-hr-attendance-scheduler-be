@@ -141,4 +141,31 @@ class AttendanceIntegrationTests {
         assertThat(result.get("items").size()).isEqualTo(2);
         assertThat(result.get("items").toString()).contains("ABSENT").contains("IN_PROGRESS");
     }
+
+    @Test void checkInAndCheckOutAreClassifiedAndSavedAsTwoInspectionRecords() throws Exception {
+        var now = Instant.now();
+        jdbc.update("UPDATE work_schedules SET starts_at = ?, ends_at = ? WHERE id = ?",
+            java.sql.Timestamp.from(now.minusSeconds(360)), java.sql.Timestamp.from(now.plusSeconds(3600)), shiftId);
+        mvc.perform(upload(shiftId, true).header("Authorization", "Bearer " + employeeToken))
+            .andExpect(status().isCreated());
+        mvc.perform(upload(shiftId, true).with(request -> { request.setParameter("type", "CHECK_OUT"); return request; }).header("Authorization", "Bearer " + employeeToken))
+            .andExpect(status().isCreated()).andExpect(jsonPath("$.type").value("CHECK_OUT"));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM attendance_events WHERE schedule_id = ?", Integer.class, shiftId)).isEqualTo(2);
+        var today = LocalDate.now(ZoneId.of("Asia/Ho_Chi_Minh"));
+        var response = mapper.readTree(mvc.perform(get("/api/v1/attendance/results")
+            .header("Authorization", "Bearer " + managerToken)
+            .param("from", today.minusDays(1).toString()).param("to", today.toString()))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        var items = response.get("items");
+        JsonNode classified = null;
+        for (JsonNode item : items) if (item.get("scheduleId").asText().equals(shiftId.toString())) classified = item;
+        assertThat(classified).isNotNull();
+        assertThat(classified.get("arrival").asText()).isEqualTo("LATE");
+        assertThat(classified.get("departure").asText()).isEqualTo("EARLY_LEAVE");
+        assertThat(classified.get("overall").asText()).isEqualTo("LATE_AND_EARLY_LEAVE");
+        assertThat(classified.get("lateMinutes").asLong()).isGreaterThanOrEqualTo(6);
+        assertThat(classified.get("earlyMinutes").asLong()).isGreaterThanOrEqualTo(59);
+        mvc.perform(get("/api/v1/attendance/results").header("Authorization", "Bearer " + employeeToken)
+            .param("from", today.toString()).param("to", today.toString())).andExpect(status().isForbidden());
+    }
 }

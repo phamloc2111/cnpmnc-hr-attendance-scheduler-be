@@ -4,9 +4,12 @@ Phạm vi: SYNC-19 (US09) và SYNC-22 (US12), trên backend và web. Không thay
 
 ## Sử dụng trên web
 
-- Nhân viên mở **Chấm công**, chọn ca trong tuần, chọn ảnh Timemark JPEG/PNG từ thư viện hoặc chụp mới, rồi bấm **Điểm danh vào** hoặc **Điểm danh ra**. Lượt ra chỉ xuất hiện sau lượt vào. Trình duyệt lấy tọa độ mới tại lúc bấm gửi (`maximumAge: 0`); nếu từ chối quyền, không gọi API và hiển thị lý do.
-- Quản lý mở **Bảng công** để xem các ca của nhân viên hiện thuộc quyền quản lý. Quản trị viên xem toàn bộ. Bảng tự tải lại mỗi phút và có nút tải lại.
-- Trình duyệt cần HTTPS hoặc `localhost` để dùng Geolocation. Chọn ảnh có sẵn được phép; vị trí ghi nhận là vị trí của thiết bị **lúc gửi**, không phải vị trí nằm trong ảnh.
+- Nhân viên bấm **Điểm danh** tại trang chủ để mở camera trực tiếp, rồi bấm **Chụp và điểm danh vào/ra**. Không có lựa chọn ảnh từ thư viện. GPS được lấy mới tại lần gửi (maximumAge: 0); từ chối quyền camera/GPS sẽ không ghi nhận.
+- Ảnh chụp mới từ video camera được đóng dấu ShiftSync, giờ Việt Nam, tọa độ và độ chính xác GPS. Đây là ảnh tạo trong web, không phải ảnh do ứng dụng Timemark riêng tạo. Trình duyệt không có API điều khiển ứng dụng Timemark.
+- Sau lượt vào, nút chuyển sang lượt ra. Cho phép ra ca đã kết thúc nếu đã vào mà chưa ra. Mỗi lần thử lại đều chụp ảnh và lấy GPS mới; giao diện khóa gửi khi đang xử lý.
+- Quản lý/quản trị mở **Phân loại ca làm** (#/attendance-results) để xem trạng thái vào, ra, tổng hợp và số phút vi phạm. Trang tải lại mỗi phút, phân trang phía server và bao gồm ca vắng không có lượt điểm danh. **Bảng công** hiện có vẫn hiển thị từng ảnh/lượt.
+- Camera và Geolocation cần HTTPS hoặc localhost, cùng quyền trình duyệt tương ứng. Hai thao tác chính là mở Điểm danh và Chụp/gửi; hộp thoại cấp quyền do hệ điều hành/trình duyệt quản lý.
+- Backend vẫn kiểm tra tọa độ điểm làm việc đã cấu hình, thời gian bằng chứng và GPS. Không bật mặc định bỏ qua xác minh; thiếu cấu hình điểm làm việc trả lỗi rõ ràng.
 
 ## Quy tắc ghi nhận
 
@@ -54,6 +57,6 @@ Flyway V8 tạo `attendance_records` và nhập các lượt đã có trong `att
 
 ## Giới hạn hiện tại
 
-Ảnh được lưu và gắn vị trí lúc gửi, nhưng chưa đọc giờ/vị trí từ nội dung ảnh và chưa so khớp với GPS. Đó là phạm vi SYNC-20 và SYNC-21. GPS của trình duyệt là dữ liệu do client gửi, chưa có cơ chế chứng thực độc lập chống giả mạo. Trạng thái được tính từ thời điểm máy chủ nhận ảnh nên chỉ nên dùng làm kết quả sơ bộ trước bước xác minh ảnh.
+Luồng chụp mới trên web gửi thời gian/tọa độ đã đóng trên ảnh qua các trường timemarkCapturedAt, timemarkLatitude, timemarkLongitude để tương thích endpoint hiện có. Endpoint phân tích ảnh Timemark riêng vẫn giữ nguyên. Việc bắt buộc chụp mới được thực hiện trong giao diện; dữ liệu từ trình duyệt chưa phải bằng chứng độc lập chống client tùy chỉnh/giả mạo. Trạng thái được tính từ thời điểm máy chủ nhận ảnh nên chỉ nên dùng làm kết quả sơ bộ trước bước xác minh ảnh.
 
 Flyway V7 tạo bảng `attendance_events`. Kiểm thử chạy với PostgreSQL Testcontainers qua `mvn test`; web dùng `npm test` và `npm run build`.
