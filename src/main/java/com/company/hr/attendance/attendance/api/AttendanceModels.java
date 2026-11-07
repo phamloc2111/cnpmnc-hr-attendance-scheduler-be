@@ -10,4 +10,13 @@ public final class AttendanceModels {
                                 Instant locatedAt, double latitude, double longitude, double accuracyMeters,
                                 String photoUrl) {}
     public record Photo(byte[] bytes, String contentType) {}
+    /** Data visibly read from the Timemark overlay in an uploaded image. */
+    public record TimemarkAnalysisResponse(
+        boolean readable,
+        String printedDateTime,
+        Double latitude,
+        Double longitude,
+        String address,
+        String reason
+    ) {}
 }

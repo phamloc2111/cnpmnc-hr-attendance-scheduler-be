@@ -44,6 +44,13 @@ public class AttendanceController {
         return ResponseEntity.created(URI.create("/api/v1/attendance/events/" + result.id())).body(result);
     }
 
+    /** Reads the timestamp and location overlay only; the uploaded image is not persisted here. */
+    @PostMapping(value = "/timemark-analysis", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasAnyRole('EMPLOYEE','MANAGER','ADMIN')")
+    public TimemarkAnalysisResponse analyzeTimemark(@RequestPart("image") MultipartFile image) {
+        return service.analyzeTimemark(image);
+    }
+
     @GetMapping("/events")
     @PreAuthorize("hasRole('EMPLOYEE')")
     public List<EventResponse> mine(@AuthenticationPrincipal Jwt jwt,

@@ -24,9 +24,13 @@ public class AttendanceService {
     private final AttendanceEventRepository events;
     private final WorkScheduleApi schedules;
     private final IdentityApi identity;
-    public AttendanceService(AttendanceEventRepository events, WorkScheduleApi schedules, IdentityApi identity) {
-        this.events = events; this.schedules = schedules; this.identity = identity;
+    private final TimemarkReader timemarkReader;
+    public AttendanceService(AttendanceEventRepository events, WorkScheduleApi schedules, IdentityApi identity,
+                             TimemarkReader timemarkReader) {
+        this.events = events; this.schedules = schedules; this.identity = identity; this.timemarkReader = timemarkReader;
     }
+
+    public TimemarkAnalysisResponse analyzeTimemark(MultipartFile image) { return timemarkReader.read(image); }
 
     @Transactional
     public EventResponse record(UUID actorId, UUID scheduleId, EventType type, Instant locatedAt,
