@@ -1,5 +1,6 @@
 package com.company.hr.attendance.workschedule.application;
 
+import com.company.hr.attendance.attendance.AttendanceApi;
 import com.company.hr.attendance.identity.IdentityApi;
 import com.company.hr.attendance.organization.PositionsApi;
 import com.company.hr.attendance.workschedule.api.ScheduleModels.*;
@@ -23,9 +24,12 @@ public class ScheduleService {
     private final WorkScheduleRepository schedules;
     private final ZoneId zone;
     private final PositionsApi positions;
+    private final AttendanceApi attendance;
     public ScheduleService(IdentityApi identity, ShiftTemplateRepository shifts, WorkScheduleRepository schedules,
-                           @Value("${app.timezone:Asia/Ho_Chi_Minh}") String timezone, PositionsApi positions) {
-        this.identity = identity; this.shifts = shifts; this.schedules = schedules; this.zone = ZoneId.of(timezone); this.positions = positions;
+                           @Value("${app.timezone:Asia/Ho_Chi_Minh}") String timezone, PositionsApi positions,
+                           AttendanceApi attendance) {
+        this.identity = identity; this.shifts = shifts; this.schedules = schedules; this.zone = ZoneId.of(timezone);
+        this.positions = positions; this.attendance = attendance;
     }
     public PageResponse<ShiftResponse> shifts(UUID actorId, int page, int size) {
         management(actorId);
@@ -93,6 +97,8 @@ public class ScheduleService {
         var employee = identity.lockPerson(schedule.getEmployeeId());
         // Admin can also remove old schedules after an employee's role has changed.
         if (!actor.role().equals("ADMIN")) checkEmployee(actor, employee);
+        if (attendance.hasEvents(id)) throw new ScheduleException(CONFLICT, "SCHEDULE_HAS_ATTENDANCE",
+            "Ca đã có lượt điểm danh; không thể hủy.");
         schedules.delete(schedule);
         schedules.flush();
     }

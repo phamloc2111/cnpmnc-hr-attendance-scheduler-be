@@ -24,7 +24,7 @@ Mẫu ca dùng chung. Chỉ phân ca cho tài khoản EMPLOYEE đang hoạt đ�
 - Lưu thời điểm lịch bằng UTC, kèm ngày làm việc, múi giờ và bản sao tên ca / thời gian nghỉ. Mẫu ca ở phạm vi này chỉ tạo và xem.
 - Mọi ca của một nhân viên được kiểm tra chồng giờ, bao gồm ngày trước/sau và giờ nghỉ. Hai ca nối tiếp đúng thời điểm kết thúc được phép.
 - Các thao tác ghi cùng nhân viên được tuần tự hóa bằng khóa hàng tài khoản trong transaction. Hai request phân ca chồng giờ đồng thời: một thành công, một 409.
-- Hủy ca cần xác nhận trên web. Đổi ca bằng cách hủy và phân lại. Chưa triển khai lịch lặp, yêu cầu đổi ca, nghỉ phép hay chấm công.
+- Hủy ca cần xác nhận trên web; ca đã có lượt điểm danh không thể hủy. Đổi ca bằng cách hủy và phân lại trước khi điểm danh. Chưa triển khai lịch lặp, yêu cầu đổi ca hay nghỉ phép. Xem [ATTENDANCE.md](ATTENDANCE.md) về chấm công.
 - Danh sách lọc theo workDate (bao gồm hai đầu), tối đa 31 ngày, page từ 0, size 1–100. Ca đêm Chủ nhật xuất hiện trong tuần chứa ngày bắt đầu, kể cả khi kết thúc vào thứ Hai.
 
 ## API
