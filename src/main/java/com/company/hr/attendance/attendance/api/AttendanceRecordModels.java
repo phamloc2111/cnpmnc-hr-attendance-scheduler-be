@@ -19,14 +19,42 @@ public final class AttendanceRecordModels {
         @NotNull AttendanceType checkType,
         Instant recordedAt,
         @NotBlank @Size(max = 2048) String photoUrl,
+        @Size(max = 128) String photoHash,
         Instant photoCapturedAt,
         @NotBlank @Size(max = 500) String photoLocation,
         @NotBlank @Size(max = 500) String deviceLocation,
         @DecimalMin("-90.0") @DecimalMax("90.0") Double deviceLatitude,
         @DecimalMin("-180.0") @DecimalMax("180.0") Double deviceLongitude,
+        @Size(max = 128) String deviceId,
+        @Size(max = 160) String deviceName,
+        Boolean mockLocation,
+        Boolean continuousTracking,
         @NotNull AttendanceStatus status,
         @Size(max = 500) String verificationNote
     ) {}
+
+    public record RegisterDeviceRequest(
+        @NotBlank @Size(max = 128) String deviceId,
+        @Size(max = 160) String deviceName
+    ) {}
+
+    public record RegisteredDeviceResponse(
+        UUID employeeId,
+        String employeeName,
+        String deviceId,
+        String deviceName,
+        Instant registeredAt
+    ) {
+        public static RegisteredDeviceResponse from(RegisteredDevice device, String employeeName) {
+            return new RegisteredDeviceResponse(
+                device.getEmployeeId(),
+                employeeName,
+                device.getDeviceId(),
+                device.getDeviceName(),
+                device.getRegisteredAt()
+            );
+        }
+    }
 
     public record AttendanceRecordResponse(
         UUID id,
@@ -38,11 +66,16 @@ public final class AttendanceRecordModels {
         AttendanceType checkType,
         Instant recordedAt,
         String photoUrl,
+        String photoHash,
         Instant photoCapturedAt,
         String photoLocation,
         String deviceLocation,
         Double deviceLatitude,
         Double deviceLongitude,
+        String deviceId,
+        String deviceName,
+        boolean mockLocation,
+        FraudType fraudType,
         AttendanceStatus status,
         String verificationNote
     ) {
@@ -57,11 +90,16 @@ public final class AttendanceRecordModels {
                 record.getCheckType(),
                 record.getRecordedAt(),
                 record.getPhotoUrl(),
+                record.getPhotoHash(),
                 record.getPhotoCapturedAt(),
                 record.getPhotoLocation(),
                 record.getDeviceLocation(),
                 record.getDeviceLatitude(),
                 record.getDeviceLongitude(),
+                record.getDeviceId(),
+                record.getDeviceName(),
+                record.isMockLocation(),
+                record.getFraudType(),
                 record.getStatus(),
                 record.getVerificationNote()
             );

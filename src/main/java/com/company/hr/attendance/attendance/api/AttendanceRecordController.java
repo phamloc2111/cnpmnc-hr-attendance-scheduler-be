@@ -7,6 +7,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import java.net.URI;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
@@ -48,13 +49,39 @@ public class AttendanceRecordController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
+    @PreAuthorize("hasAnyRole('EMPLOYEE','MANAGER','ADMIN')")
     public ResponseEntity<AttendanceRecordResponse> create(
         @AuthenticationPrincipal Jwt jwt,
         @Valid @RequestBody CreateAttendanceRequest request
     ) {
         var result = service.create(actor(jwt), request);
         return ResponseEntity.created(URI.create("/api/v1/attendance-records/" + result.id())).body(result);
+    }
+
+    @GetMapping("/devices")
+    @PreAuthorize("hasAnyRole('EMPLOYEE','MANAGER','ADMIN')")
+    public List<RegisteredDeviceResponse> listDevices(@AuthenticationPrincipal Jwt jwt) {
+        return service.listDevices(actor(jwt));
+    }
+
+    @PutMapping("/devices/{employeeId}")
+    @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
+    public RegisteredDeviceResponse registerDevice(
+        @AuthenticationPrincipal Jwt jwt,
+        @PathVariable UUID employeeId,
+        @Valid @RequestBody RegisterDeviceRequest request
+    ) {
+        return service.registerDevice(actor(jwt), employeeId, request);
+    }
+
+    @DeleteMapping("/devices/{employeeId}")
+    @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
+    public ResponseEntity<Void> resetDevice(
+        @AuthenticationPrincipal Jwt jwt,
+        @PathVariable UUID employeeId
+    ) {
+        service.resetDevice(actor(jwt), employeeId);
+        return ResponseEntity.noContent().build();
     }
 
     private UUID actor(Jwt jwt) {
