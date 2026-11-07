@@ -1,4 +1,8 @@
 spring:
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 6MB
   application:
     name: attendance-scheduler-api
   config:
@@ -35,6 +39,8 @@ management:
         enabled: true
 
 app:
+  attendance:
+    grace-minutes: ${ATTENDANCE_GRACE_MINUTES:5}
   auth:
     jwt-secret: ${JWT_SECRET:}
     issuer: hr-attendance
