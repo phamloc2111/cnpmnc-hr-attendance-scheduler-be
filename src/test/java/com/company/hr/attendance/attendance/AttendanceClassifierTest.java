@@ -35,4 +35,21 @@ class AttendanceClassifierTest {
         assertEquals(Arrival.ON_TIME, result.arrival());
         assertEquals(Overall.MISSING_CHECK_OUT, result.overall());
     }
+
+    @Test void exactGraceBoundaryIsOnTimeButAnyFractionBeyondItRoundsUp() {
+        var boundary = AttendanceClassifier.classify(START, END, START.plusSeconds(300), END.minusSeconds(300), END);
+        assertEquals(Overall.ON_TIME, boundary.overall());
+        var violation = AttendanceClassifier.classify(START, END, START.plusSeconds(300).plusNanos(1), END.minusSeconds(300).minusNanos(1), END);
+        assertEquals(Overall.LATE_AND_EARLY_LEAVE, violation.overall());
+        assertEquals(6, violation.lateMinutes());
+        assertEquals(6, violation.earlyMinutes());
+    }
+    @Test void overnightShiftUsesInstantsAcrossMidnight() {
+        var start = Instant.parse("2026-11-07T15:00:00Z");
+        var end = Instant.parse("2026-11-07T23:00:00Z");
+        var result = AttendanceClassifier.classify(start, end, start.plusSeconds(240), end.minusSeconds(360), end);
+        assertEquals(Arrival.ON_TIME, result.arrival());
+        assertEquals(Departure.EARLY_LEAVE, result.departure());
+        assertEquals(6, result.earlyMinutes());
+    }
 }
