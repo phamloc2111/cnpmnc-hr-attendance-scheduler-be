@@ -58,6 +58,28 @@ class ScheduleIntegrationTests {
         outsider = save("outsider", Role.EMPLOYEE, otherManager.getId());
         adminToken = token(admin); managerToken = token(manager); employeeToken = token(employee);
     }
+
+    @Test void list_employeeHome_exposesAssignedShiftPositionWithoutCatalogAccess() throws Exception {
+        var template = shift("07:00", "11:00", 0);
+        assign(managerToken, employee, template, "2026-11-09").andExpect(status().isCreated())
+            .andExpect(jsonPath("$.requiredPosition").value("Thu ngân"));
+        assign(adminToken, outsider, template, "2026-11-09").andExpect(status().isCreated());
+        mvc.perform(get("/api/v1/work-schedules").header("Authorization", "Bearer " + employeeToken)
+            .param("from", "2026-11-08").param("to", "2026-11-09"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
+            .andExpect(jsonPath("$.items[0].requiredPosition").value("Thu ngân"))
+            .andExpect(jsonPath("$.items[0].startsAt").value("2026-11-09T00:00:00Z"));
+    }
+
+    @Test void list_legacyShiftWithoutPosition_returnsNullablePosition() throws Exception {
+        var template = shift("07:00", "11:00", 0);
+        jdbc.update("update work_shift_templates set required_position=null where id=?", UUID.fromString(template.get("id").asText()));
+        assign(managerToken, employee, template, "2026-11-09").andExpect(status().isCreated());
+        mvc.perform(get("/api/v1/work-schedules").header("Authorization", "Bearer " + employeeToken)
+            .param("from", "2026-11-09").param("to", "2026-11-09"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.items[0].requiredPosition").isEmpty());
+    }
+
     Account save(String name, Role role, UUID managerId) {
         var account = new Account(name + "@example.com", passwords.encode(PASSWORD), name, role);
         account.updateDetails(account.getEmail(), name, role, null, List.of(), managerId);
