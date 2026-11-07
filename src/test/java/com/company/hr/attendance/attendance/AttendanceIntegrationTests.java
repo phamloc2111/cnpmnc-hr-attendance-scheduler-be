@@ -65,6 +65,7 @@ class AttendanceIntegrationTests {
     }
     @AfterEach void cleanup() { clear(); }
     private void clear() {
+        jdbc.update("DELETE FROM attendance_records");
         jdbc.update("DELETE FROM attendance_events");
         jdbc.update("DELETE FROM work_schedules");
         jdbc.update("DELETE FROM work_shift_templates");
@@ -111,6 +112,17 @@ class AttendanceIntegrationTests {
             .andExpect(status().isCreated()).andExpect(jsonPath("$.type").value("CHECK_IN"))
             .andReturn().getResponse().getContentAsString());
         var photoId = created.get("id").asText();
+        JsonNode recordPage = mapper.readTree(mvc.perform(get("/api/v1/attendance-records")
+            .header("Authorization", "Bearer " + managerToken))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(recordPage.get("totalElements").asInt()).isEqualTo(1);
+        assertThat(recordPage.at("/items/0/id").asText()).isEqualTo(photoId);
+        assertThat(recordPage.at("/items/0/status").asText()).isEqualTo("ON_TIME");
+        assertThat(recordPage.at("/items/0/photoUrl").asText())
+            .isEqualTo("/api/v1/attendance/events/" + photoId + "/photo");
+        mvc.perform(get("/api/v1/attendance-records/{id}", photoId)
+            .header("Authorization", "Bearer " + outsiderToken))
+            .andExpect(status().isNotFound());
         mvc.perform(upload(shiftId, true).header("Authorization", "Bearer " + employeeToken))
             .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("ALREADY_RECORDED"));
         mvc.perform(delete("/api/v1/work-schedules/{id}", shiftId).header("Authorization", "Bearer " + managerToken))

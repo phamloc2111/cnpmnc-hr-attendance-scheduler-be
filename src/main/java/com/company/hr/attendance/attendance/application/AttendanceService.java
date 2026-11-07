@@ -2,6 +2,10 @@ package com.company.hr.attendance.attendance.application;
 
 import com.company.hr.attendance.attendance.api.AttendanceModels.*;
 import com.company.hr.attendance.attendance.infrastructure.AttendanceEventRepository;
+import com.company.hr.attendance.attendance.infrastructure.AttendanceRecordRepository;
+import com.company.hr.attendance.attendance.domain.AttendanceRecord;
+import com.company.hr.attendance.attendance.domain.AttendanceStatus;
+import com.company.hr.attendance.attendance.domain.AttendanceType;
 import com.company.hr.attendance.identity.IdentityApi;
 import com.company.hr.attendance.workschedule.WorkScheduleApi;
 import java.io.IOException;
@@ -12,6 +16,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,10 +27,15 @@ import org.springframework.web.multipart.MultipartFile;
 public class AttendanceService {
     private static final long MAX_PHOTO_BYTES = 5L * 1024 * 1024;
     private final AttendanceEventRepository events;
+    private final AttendanceRecordRepository records;
     private final WorkScheduleApi schedules;
     private final IdentityApi identity;
-    public AttendanceService(AttendanceEventRepository events, WorkScheduleApi schedules, IdentityApi identity) {
-        this.events = events; this.schedules = schedules; this.identity = identity;
+    private final int graceMinutes;
+    public AttendanceService(AttendanceEventRepository events, AttendanceRecordRepository records,
+                             WorkScheduleApi schedules, IdentityApi identity,
+                             @Value("${app.attendance.grace-minutes:5}") int graceMinutes) {
+        this.events = events; this.records = records; this.schedules = schedules; this.identity = identity;
+        this.graceMinutes = graceMinutes;
     }
 
     @Transactional
@@ -70,6 +80,16 @@ public class AttendanceService {
         catch (DataIntegrityViolationException error) {
             throw new AttendanceException(HttpStatus.CONFLICT, "ALREADY_RECORDED", "Lượt điểm danh đã được ghi nhận hoặc ca vừa thay đổi.");
         }
+        var status = type == EventType.CHECK_IN
+            ? (receivedAt.isAfter(schedule.startsAt().plus(Duration.ofMinutes(graceMinutes)))
+                ? AttendanceStatus.LATE : AttendanceStatus.ON_TIME)
+            : (receivedAt.isBefore(schedule.endsAt().minus(Duration.ofMinutes(graceMinutes)))
+                ? AttendanceStatus.EARLY_LEAVE : AttendanceStatus.ON_TIME);
+        records.saveAndFlush(new AttendanceRecord(id, actorId, scheduleId, schedule.workDate(), schedule.name(),
+            AttendanceType.valueOf(type.name()), receivedAt,
+            "/api/v1/attendance/events/" + id + "/photo", null, "Chưa xác minh từ ảnh",
+            latitude + ", " + longitude, latitude, longitude, status,
+            "Ảnh Timemark chưa được đối chiếu với vị trí GPS."));
         return new EventResponse(id, scheduleId, type, receivedAt, locatedAt, latitude, longitude, accuracy,
             "/api/v1/attendance/events/" + id + "/photo");
     }
