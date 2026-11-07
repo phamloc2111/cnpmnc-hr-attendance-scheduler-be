@@ -1,5 +1,7 @@
 # Ca làm và lịch làm việc
 
+SYNC-18: response phân ca và danh sách lịch bổ sung `requiredPosition` từ mẫu ca để nhân viên xem vị trí trên trang chủ. Trường có thể null cho mẫu ca cũ. Không thay đổi quyền truy cập lịch; nhân viên chỉ đọc lịch của chính mình. Vị trí được tải theo lô cùng trang lịch, không cần quyền đọc danh mục. Không thay đổi schema.
+
 SS-16: https://hcmut-team-f3ubnuof.atlassian.net/browse/SS-16 — Định nghĩa ca làm.
 
 Web: menu **Lịch làm việc** → **Mẫu ca** để tạo, sau đó **Phân ca** để chọn nhân viên, mẫu ca và ngày bắt đầu. Nhân viên xem **Lịch của tôi** trên mobile hoặc web. Lịch hiển thị theo tuần và phân trang từ máy chủ.
