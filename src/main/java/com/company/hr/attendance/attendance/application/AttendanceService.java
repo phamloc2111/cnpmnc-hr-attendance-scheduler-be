@@ -1,136 +1,130 @@
 package com.company.hr.attendance.attendance.application;
 
 import com.company.hr.attendance.attendance.api.AttendanceModels.*;
-import com.company.hr.attendance.attendance.domain.*;
+import com.company.hr.attendance.attendance.infrastructure.AttendanceEventRepository;
 import com.company.hr.attendance.attendance.infrastructure.AttendanceRecordRepository;
+import com.company.hr.attendance.attendance.domain.AttendanceRecord;
+import com.company.hr.attendance.attendance.domain.AttendanceStatus;
+import com.company.hr.attendance.attendance.domain.AttendanceType;
 import com.company.hr.attendance.identity.IdentityApi;
+import com.company.hr.attendance.workschedule.WorkScheduleApi;
+import java.io.IOException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
-import java.util.*;
-import org.springframework.data.domain.*;
-import org.springframework.data.jpa.domain.Specification;
+import java.util.List;
+import java.util.UUID;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import static org.springframework.http.HttpStatus.*;
+import org.springframework.web.multipart.MultipartFile;
 
 @Service
 @Transactional(readOnly = true)
 public class AttendanceService {
-    private final IdentityApi identity;
+    private static final long MAX_PHOTO_BYTES = 5L * 1024 * 1024;
+    private final AttendanceEventRepository events;
     private final AttendanceRecordRepository records;
-
-    public AttendanceService(IdentityApi identity, AttendanceRecordRepository records) {
-        this.identity = identity;
-        this.records = records;
+    private final WorkScheduleApi schedules;
+    private final IdentityApi identity;
+    private final TimemarkReader timemarkReader;
+    private final AttendanceVerificationService verification;
+    private final int graceMinutes;
+    public AttendanceService(AttendanceEventRepository events, AttendanceRecordRepository records,
+                             WorkScheduleApi schedules, IdentityApi identity, TimemarkReader timemarkReader,
+                             AttendanceVerificationService verification,
+                             @Value("${app.attendance.grace-minutes:5}") int graceMinutes) {
+        this.events = events; this.records = records; this.schedules = schedules; this.identity = identity;
+        this.timemarkReader = timemarkReader; this.verification = verification;
+        this.graceMinutes = graceMinutes;
     }
 
-    public PageResponse<AttendanceRecordResponse> list(
-        UUID actorId,
-        LocalDate from,
-        LocalDate to,
-        UUID employeeId,
-        AttendanceStatus status,
-        AttendanceType checkType,
-        int page,
-        int size
-    ) {
-        if (from != null && to != null && (to.isBefore(from) || ChronoUnit.DAYS.between(from, to) > 62)) {
-            throw new AttendanceException(BAD_REQUEST, "INVALID_DATE_RANGE", "Khoảng ngày không hợp lệ hoặc vượt quá 62 ngày.");
-        }
-        var actor = active(actorId);
-        Specification<AttendanceRecord> filter = (root, ignored, cb) -> cb.conjunction();
-        if (from != null) {
-            filter = filter.and((root, ignored, cb) -> cb.greaterThanOrEqualTo(root.get("workDate"), from));
-        }
-        if (to != null) {
-            filter = filter.and((root, ignored, cb) -> cb.lessThanOrEqualTo(root.get("workDate"), to));
-        }
-        if (actor.role().equals("EMPLOYEE")) {
-            if (employeeId != null && !employeeId.equals(actorId)) throw forbidden();
-            filter = filter.and((root, ignored, cb) -> cb.equal(root.get("employeeId"), actorId));
-        } else if (actor.role().equals("MANAGER")) {
-            var managedIds = identity.managedEmployeeIds(actorId);
-            if (employeeId != null && !managedIds.contains(employeeId)) throw notFound();
-            filter = filter.and((root, ignored, cb) ->
-                managedIds.isEmpty() ? cb.disjunction() : root.get("employeeId").in(managedIds));
-        }
-        if (employeeId != null) {
-            filter = filter.and((root, ignored, cb) -> cb.equal(root.get("employeeId"), employeeId));
-        }
-        if (status != null) {
-            filter = filter.and((root, ignored, cb) -> cb.equal(root.get("status"), status));
-        }
-        if (checkType != null) {
-            filter = filter.and((root, ignored, cb) -> cb.equal(root.get("checkType"), checkType));
-        }
-        var sort = Sort.by(Sort.Order.desc("recordedAt"), Sort.Order.asc("id"));
-        var result = records.findAll(filter, PageRequest.of(page, size, sort));
-        var names = identity.names(result.stream().map(AttendanceRecord::getEmployeeId).distinct().toList());
-        return PageResponse.from(result.map(record -> AttendanceRecordResponse.from(
-            record,
-            names.getOrDefault(record.getEmployeeId(), "Nhân viên")
-        )));
-    }
-
-    public AttendanceRecordResponse get(UUID actorId, UUID id) {
-        var actor = active(actorId);
-        var record = records.findById(id).orElseThrow(AttendanceService::notFound);
-        if (actor.role().equals("EMPLOYEE") && !record.getEmployeeId().equals(actorId)) {
-            throw notFound();
-        }
-        if (actor.role().equals("MANAGER") && !identity.managedEmployeeIds(actorId).contains(record.getEmployeeId())) {
-            throw notFound();
-        }
-        var names = identity.names(List.of(record.getEmployeeId()));
-        return AttendanceRecordResponse.from(record, names.getOrDefault(record.getEmployeeId(), "Nhân viên"));
-    }
+    public TimemarkAnalysisResponse analyzeTimemark(MultipartFile image) { return timemarkReader.read(image); }
 
     @Transactional
-    public AttendanceRecordResponse create(UUID actorId, CreateAttendanceRequest request) {
-        var actor = active(actorId);
-        var targetEmployeeId = request.employeeId() != null ? request.employeeId() : actorId;
-        if (actor.role().equals("EMPLOYEE") && !targetEmployeeId.equals(actorId)) {
-            throw forbidden();
-        }
-        var employee = identity.person(targetEmployeeId);
-        if (!employee.role().equals("EMPLOYEE") || employee.locked()) {
-            throw new AttendanceException(BAD_REQUEST, "INVALID_EMPLOYEE", "Nhân viên điểm danh không hợp lệ hoặc đã bị khóa.");
-        }
-        if (actor.role().equals("MANAGER") && !actorId.equals(employee.managerId())) {
-            throw notFound();
-        }
-        var recordedAt = request.recordedAt() != null ? request.recordedAt() : Instant.now();
-        var record = new AttendanceRecord(
-            employee.id(),
-            request.scheduleId(),
-            request.workDate(),
-            request.shiftName(),
-            request.checkType(),
-            recordedAt,
-            request.photoUrl(),
-            request.photoCapturedAt() != null ? request.photoCapturedAt() : recordedAt,
-            request.photoLocation(),
-            request.deviceLocation(),
-            request.deviceLatitude(),
-            request.deviceLongitude(),
-            request.status(),
-            request.verificationNote()
-        );
-        return AttendanceRecordResponse.from(records.saveAndFlush(record), employee.name());
-    }
+    public EventResponse record(UUID actorId, UUID scheduleId, EventType type, Instant locatedAt,
+                                Double latitude, Double longitude, Double accuracy,
+                                TimemarkEvidence timemark, MultipartFile photo) {
+        var actor = identity.person(actorId);
+        if (actor.locked() || !actor.role().equals("EMPLOYEE")) throw forbidden();
+        if (scheduleId == null || type == null || locatedAt == null || latitude == null || longitude == null || accuracy == null || timemark == null)
+            throw invalid("Cần chọn ca, lượt vào/ra và cấp vị trí hiện tại khi gửi ảnh.");
+        if (!Double.isFinite(latitude) || latitude < -90 || latitude > 90 ||
+            !Double.isFinite(longitude) || longitude < -180 || longitude > 180 ||
+            !Double.isFinite(accuracy) || accuracy < 0 || accuracy > 10000)
+            throw invalid("Tọa độ hoặc độ chính xác vị trí không hợp lệ.");
+        var receivedAt = Instant.now();
+        if (locatedAt.isAfter(receivedAt.plusSeconds(30)) ||
+            Duration.between(locatedAt, receivedAt).compareTo(Duration.ofMinutes(2)) > 0)
+            throw invalid("Vị trí đã cũ. Hãy bật định vị và gửi lại ảnh.");
+        verification.verify(latitude, longitude, timemark, receivedAt);
+        if (photo == null || photo.isEmpty() || photo.getSize() > MAX_PHOTO_BYTES)
+            throw invalid("Ảnh Timemark phải có dung lượng từ 1 byte đến 5 MB.");
+        byte[] bytes;
+        try { bytes = photo.getBytes(); }
+        catch (IOException error) { throw invalid("Không đọc được ảnh. Vui lòng chọn lại."); }
+        if (bytes.length == 0 || bytes.length > MAX_PHOTO_BYTES) throw invalid("Ảnh Timemark vượt quá 5 MB.");
+        String contentType;
+        if (bytes.length >= 3 && (bytes[0] & 0xff) == 0xff && (bytes[1] & 0xff) == 0xd8 && (bytes[2] & 0xff) == 0xff) contentType = "image/jpeg";
+        else if (bytes.length >= 8 && (bytes[0] & 0xff) == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4e && bytes[3] == 0x47 && bytes[4] == 0x0d && bytes[5] == 0x0a && bytes[6] == 0x1a && bytes[7] == 0x0a) contentType = "image/png";
+        else throw invalid("Chỉ hỗ trợ ảnh JPEG hoặc PNG.");
 
-    private IdentityApi.Person active(UUID id) {
-        var person = identity.person(id);
-        if (person.locked()) throw forbidden();
-        return person;
+        // The schedule row lock serializes check-in/check-out and prevents duplicate concurrent uploads.
+        var schedule = schedules.lock(scheduleId).orElseThrow(() ->
+            new AttendanceException(HttpStatus.NOT_FOUND, "SCHEDULE_NOT_FOUND", "Không tìm thấy ca làm việc."));
+        if (!schedule.employeeId().equals(actorId)) throw forbidden();
+        if (type == EventType.CHECK_IN && !receivedAt.isBefore(schedule.endsAt()))
+            throw new AttendanceException(HttpStatus.CONFLICT, "SHIFT_ENDED", "Ca đã kết thúc; không thể chấm vào.");
+        if (type == EventType.CHECK_OUT && !events.exists(scheduleId, EventType.CHECK_IN))
+            throw new AttendanceException(HttpStatus.CONFLICT, "CHECK_IN_REQUIRED", "Cần chấm vào trước khi chấm ra.");
+        if (events.exists(scheduleId, type))
+            throw new AttendanceException(HttpStatus.CONFLICT, "ALREADY_RECORDED", "Lượt điểm danh này đã được ghi nhận.");
+        var id = UUID.randomUUID();
+        try { events.insert(id, scheduleId, actorId, type, receivedAt, locatedAt,
+            latitude, longitude, accuracy, contentType, bytes); }
+        catch (DataIntegrityViolationException error) {
+            throw new AttendanceException(HttpStatus.CONFLICT, "ALREADY_RECORDED", "Lượt điểm danh đã được ghi nhận hoặc ca vừa thay đổi.");
+        }
+        var status = type == EventType.CHECK_IN
+            ? (receivedAt.isAfter(schedule.startsAt().plus(Duration.ofMinutes(graceMinutes)))
+                ? AttendanceStatus.LATE : AttendanceStatus.ON_TIME)
+            : (receivedAt.isBefore(schedule.endsAt().minus(Duration.ofMinutes(graceMinutes)))
+                ? AttendanceStatus.EARLY_LEAVE : AttendanceStatus.ON_TIME);
+        records.saveAndFlush(new AttendanceRecord(id, actorId, scheduleId, schedule.workDate(), schedule.name(),
+            AttendanceType.valueOf(type.name()), receivedAt,
+            "/api/v1/attendance/events/" + id + "/photo", timemark.capturedAt(),
+            timemark.latitude() + ", " + timemark.longitude(),
+            latitude + ", " + longitude, latitude, longitude, status,
+            "Đã đối chiếu ảnh Timemark với vị trí GPS."));
+        return new EventResponse(id, scheduleId, type, receivedAt, locatedAt, latitude, longitude, accuracy,
+            "/api/v1/attendance/events/" + id + "/photo");
     }
-
+    public List<EventResponse> mine(UUID actorId, LocalDate from, LocalDate to) {
+        var actor = identity.person(actorId);
+        if (actor.locked() || !actor.role().equals("EMPLOYEE")) throw forbidden();
+        if (from == null || to == null || to.isBefore(from) || ChronoUnit.DAYS.between(from, to) > 30)
+            throw invalid("Khoảng ngày phải hợp lệ và không quá 31 ngày.");
+        return events.employeeEvents(actorId, from, to);
+    }
+    public Photo photo(UUID actorId, UUID eventId) {
+        var actor = identity.person(actorId);
+        if (actor.locked()) throw forbidden();
+        var employeeId = events.employeeId(eventId);
+        if (employeeId == null) throw notFound();
+        if (!actorId.equals(employeeId) && !actor.role().equals("ADMIN") &&
+            !(actor.role().equals("MANAGER") && identity.managedEmployeeIds(actorId).contains(employeeId))) throw forbidden();
+        return events.photo(eventId).orElseThrow(AttendanceService::notFound);
+    }
+    private static AttendanceException invalid(String message) {
+        return new AttendanceException(HttpStatus.BAD_REQUEST, "INVALID_ATTENDANCE", message);
+    }
     private static AttendanceException forbidden() {
-        return new AttendanceException(FORBIDDEN, "FORBIDDEN", "Bạn không có quyền thực hiện thao tác này.");
+        return new AttendanceException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Bạn không có quyền điểm danh hoặc xem ảnh này.");
     }
-
     private static AttendanceException notFound() {
-        return new AttendanceException(NOT_FOUND, "ATTENDANCE_NOT_FOUND", "Không tìm thấy lượt điểm danh trong phạm vi quản lý.");
+        return new AttendanceException(HttpStatus.NOT_FOUND, "NOT_FOUND", "Không tìm thấy lượt điểm danh.");
     }
 }

@@ -16,6 +16,12 @@ app:
     jwt-secret: test-only-signing-secret-at-least-32-bytes-long
   bootstrap:
     enabled: false
+  attendance:
+    verification:
+      workplace-latitude: 10.7726
+      workplace-longitude: 106.6579
+      radius-meters: 100
+      max-time-difference-seconds: 300
 logging:
   level:
     root: WARN

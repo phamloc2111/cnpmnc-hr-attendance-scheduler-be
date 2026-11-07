@@ -1,4 +1,8 @@
 spring:
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 6MB
   application:
     name: attendance-scheduler-api
   config:
@@ -35,6 +39,13 @@ management:
         enabled: true
 
 app:
+  attendance:
+    grace-minutes: ${ATTENDANCE_GRACE_MINUTES:5}
+    verification:
+      workplace-latitude: ${WORKPLACE_LATITUDE:}
+      workplace-longitude: ${WORKPLACE_LONGITUDE:}
+      radius-meters: ${WORKPLACE_RADIUS_METERS:100}
+      max-time-difference-seconds: ${TIMEMARK_MAX_TIME_DIFFERENCE_SECONDS:300}
   auth:
     jwt-secret: ${JWT_SECRET:}
     issuer: hr-attendance
@@ -49,4 +60,9 @@ app:
     employee-password: ${BOOTSTRAP_EMPLOYEE_PASSWORD:}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+  ai:
+    gemini:
+      api-key: ${GEMINI_API_KEY:}
+      model: ${GEMINI_MODEL:gemini-2.5-flash-lite}
+      timeout-ms: ${GEMINI_TIMEOUT_MS:4000}
   timezone: Asia/Ho_Chi_Minh

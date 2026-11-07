@@ -1,12 +1,18 @@
 package com.company.hr.attendance.attendance;
 
-import com.company.hr.attendance.attendance.domain.*;
-import com.company.hr.attendance.attendance.infrastructure.AttendanceRecordRepository;
-import com.company.hr.attendance.identity.domain.*;
-import com.company.hr.attendance.identity.infrastructure.*;
+import com.company.hr.attendance.identity.PostgresTestConfig;
+import com.company.hr.attendance.identity.domain.Account;
+import com.company.hr.attendance.identity.domain.Role;
+import com.company.hr.attendance.identity.infrastructure.AccountRepository;
+import com.company.hr.attendance.identity.infrastructure.LoginSessionRepository;
+import com.company.hr.attendance.workschedule.domain.ShiftTemplate;
+import com.company.hr.attendance.workschedule.infrastructure.ShiftTemplateRepository;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -16,8 +22,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -28,164 +36,109 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@Import(PostgresTestConfig.class)
 class AttendanceIntegrationTests {
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper mapper;
     @Autowired AccountRepository accounts;
     @Autowired LoginSessionRepository sessions;
-    @Autowired AttendanceRecordRepository attendanceRecords;
-    @Autowired PasswordEncoder passwords;
+    @Autowired ShiftTemplateRepository templates;
+    @Autowired PasswordEncoder encoder;
     @Autowired JdbcTemplate jdbc;
-
     private static final String PASSWORD = "Test-password-123!";
-    private Account admin;
-    private Account manager;
-    private Account otherManager;
-    private Account employee;
-    private Account outsider;
+    private UUID shiftId;
+    private UUID absentId;
+    private String employeeToken, managerToken, outsiderToken;
 
-    @BeforeEach
-    void setup() {
-        cleanup();
-        admin = saveAccount("admin@example.com", "Quản trị", Role.ADMIN, null);
-        manager = saveAccount("manager@example.com", "Quản lý A", Role.MANAGER, null);
-        otherManager = saveAccount("other-manager@example.com", "Quản lý B", Role.MANAGER, null);
-        employee = saveAccount("employee@example.com", "Nguyễn An", Role.EMPLOYEE, manager.getId());
-        outsider = saveAccount("outsider@example.com", "Trần Bình", Role.EMPLOYEE, otherManager.getId());
+    @BeforeEach void seed() throws Exception {
+        clear();
+        var manager = account("manager", Role.MANAGER, null);
+        var employee = account("employee", Role.EMPLOYEE, manager.getId());
+        var outsider = account("outsider", Role.EMPLOYEE, null);
+        employeeToken = token(employee); managerToken = token(manager); outsiderToken = token(outsider);
+        var template = templates.saveAndFlush(new ShiftTemplate("Ca sáng", LocalTime.of(8, 0), LocalTime.of(17, 0),
+            60, manager.getId(), 1, null, null, false));
+        var now = Instant.now();
+        shiftId = UUID.randomUUID(); absentId = UUID.randomUUID();
+        schedule(shiftId, employee.getId(), template.getId(), now.minusSeconds(60), now.plusSeconds(3600));
+        schedule(absentId, employee.getId(), template.getId(), now.minusSeconds(7200), now.minusSeconds(3600));
     }
-
-    @AfterEach
-    void cleanup() {
-        attendanceRecords.deleteAll();
+    @AfterEach void cleanup() { clear(); }
+    private void clear() {
+        jdbc.update("DELETE FROM attendance_records");
+        jdbc.update("DELETE FROM attendance_events");
+        jdbc.update("DELETE FROM work_schedules");
+        jdbc.update("DELETE FROM work_shift_templates");
         sessions.deleteAll();
-        jdbc.update("UPDATE identity_accounts SET manager_id = NULL");
         jdbc.update("DELETE FROM identity_account_skills");
         jdbc.update("DELETE FROM identity_accounts");
     }
-
-    private Account saveAccount(String email, String name, Role role, UUID managerId) {
-        var account = new Account(email, passwords.encode(PASSWORD), name, role);
-        account.updateDetails(email, name, role, null, List.of(), managerId);
+    private Account account(String name, Role role, UUID managerId) {
+        var account = new Account(name + "@example.com", encoder.encode(PASSWORD), name, role);
+        account.updateDetails(account.getEmail(), name, role, null, List.of(), managerId);
         return accounts.saveAndFlush(account);
     }
-
-    private String login(Account account) throws Exception {
+    private String token(Account account) throws Exception {
         var response = mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
-                .content(mapper.writeValueAsString(Map.of("email", account.getEmail(), "password", PASSWORD))))
-            .andExpect(status().isOk()).andReturn();
-        return mapper.readTree(response.getResponse().getContentAsString()).get("accessToken").asText();
+            .content(mapper.writeValueAsString(Map.of("email", account.getEmail(), "password", PASSWORD))))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        return mapper.readTree(response).get("accessToken").asText();
     }
-
-    @Test
-    void list_managerViewsManagedEmployeeAttendance_returnsPhotoPhotoLocationDeviceLocationAndResult() throws Exception {
-        var record1 = attendanceRecords.save(new AttendanceRecord(
-            employee.getId(),
-            null,
-            LocalDate.of(2026, 11, 7),
-            "Ca sáng",
-            AttendanceType.CHECK_IN,
-            Instant.parse("2026-11-07T00:58:00Z"),
-            "https://example.com/timemark/checkin-an.jpg",
-            Instant.parse("2026-11-07T00:57:50Z"),
-            "268 Lý Thường Kiệt, Quận 10, TP.HCM",
-            "10.7726, 106.6579 (268 Lý Thường Kiệt, Q.10)",
-            10.7726,
-            106.6579,
-            AttendanceStatus.ON_TIME,
-            "Khớp vị trí và thời gian"
-        ));
-        attendanceRecords.save(new AttendanceRecord(
-            outsider.getId(),
-            null,
-            LocalDate.of(2026, 11, 7),
-            "Ca sáng",
-            AttendanceType.CHECK_IN,
-            Instant.parse("2026-11-07T01:15:00Z"),
-            "https://example.com/timemark/checkin-binh.jpg",
-            Instant.parse("2026-11-07T01:14:30Z"),
-            "Quận 1, TP.HCM",
-            "10.7756, 106.7004 (Quận 1, TP.HCM)",
-            10.7756,
-            106.7004,
-            AttendanceStatus.LATE,
-            "Trễ 15 phút"
-        ));
-
-        var managerToken = login(manager);
-        mvc.perform(get("/api/v1/attendance-records")
-                .header("Authorization", "Bearer " + managerToken)
-                .param("from", "2026-11-01")
-                .param("to", "2026-11-10"))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("totalElements").value(1))
-            .andExpect(jsonPath("items[0].id").value(record1.getId().toString()))
-            .andExpect(jsonPath("items[0].employeeName").value("Nguyễn An"))
-            .andExpect(jsonPath("items[0].photoUrl").value("https://example.com/timemark/checkin-an.jpg"))
-            .andExpect(jsonPath("items[0].photoLocation").value("268 Lý Thường Kiệt, Quận 10, TP.HCM"))
-            .andExpect(jsonPath("items[0].deviceLocation").value("10.7726, 106.6579 (268 Lý Thường Kiệt, Q.10)"))
-            .andExpect(jsonPath("items[0].deviceLatitude").value(10.7726))
-            .andExpect(jsonPath("items[0].deviceLongitude").value(106.6579))
-            .andExpect(jsonPath("items[0].status").value("ON_TIME"))
-            .andExpect(jsonPath("items[0].checkType").value("CHECK_IN"))
-            .andExpect(jsonPath("items[0].verificationNote").value("Khớp vị trí và thời gian"));
+    private void schedule(UUID id, UUID employee, UUID template, Instant start, Instant end) {
+        var date = LocalDate.ofInstant(start, ZoneId.of("Asia/Ho_Chi_Minh"));
+        jdbc.update("""
+            INSERT INTO work_schedules(id, employee_id, shift_template_id, work_date, shift_name,
+                starts_at, ends_at, break_minutes, timezone, created_by)
+            VALUES (?, ?, ?, ?, 'Ca sáng', ?, ?, 60, 'Asia/Ho_Chi_Minh', ?)
+            """, id, employee, template, date, java.sql.Timestamp.from(start), java.sql.Timestamp.from(end), employee);
     }
-
-    @Test
-    void list_adminSeesAllRecordsAndCanFilterByStatus() throws Exception {
-        attendanceRecords.save(new AttendanceRecord(
-            employee.getId(), null, LocalDate.of(2026, 11, 7), "Ca sáng", AttendanceType.CHECK_IN,
-            Instant.parse("2026-11-07T00:58:00Z"), "https://example.com/timemark/1.jpg",
-            Instant.parse("2026-11-07T00:58:00Z"), "Cơ sở 1", "GPS Cơ sở 1", 10.77, 106.65,
-            AttendanceStatus.ON_TIME, null
-        ));
-        attendanceRecords.save(new AttendanceRecord(
-            outsider.getId(), null, LocalDate.of(2026, 11, 7), "Ca chiều", AttendanceType.CHECK_IN,
-            Instant.parse("2026-11-07T06:20:00Z"), "https://example.com/timemark/2.jpg",
-            Instant.parse("2026-11-07T06:20:00Z"), "Cơ sở 2", "GPS Cơ sở 2", 10.78, 106.68,
-            AttendanceStatus.LATE, "Vào trễ 20 phút"
-        ));
-
-        var adminToken = login(admin);
-        mvc.perform(get("/api/v1/attendance-records").header("Authorization", "Bearer " + adminToken))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("totalElements").value(2));
-
-        mvc.perform(get("/api/v1/attendance-records")
-                .header("Authorization", "Bearer " + adminToken)
-                .param("status", "LATE"))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("totalElements").value(1))
-            .andExpect(jsonPath("items[0].employeeName").value("Trần Bình"))
-            .andExpect(jsonPath("items[0].status").value("LATE"));
+    private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder upload(UUID id, boolean location) {
+        var request = multipart("/api/v1/attendance/events")
+            .file(new MockMultipartFile("photo", "timemark.jpg", "image/jpeg",
+                new byte[]{(byte) 0xff, (byte) 0xd8, (byte) 0xff, 1}))
+            .param("scheduleId", id.toString()).param("type", "CHECK_IN");
+        if (location) request.param("locatedAt", Instant.now().toString())
+            .param("latitude", "10.7726").param("longitude", "106.6579").param("accuracyMeters", "5.0")
+            .param("timemarkCapturedAt", Instant.now().toString())
+            .param("timemarkLatitude", "10.7726").param("timemarkLongitude", "106.6579");
+        return request;
     }
-
-    @Test
-    void createAndGet_enforcesScopeBetweenManagers() throws Exception {
-        var managerToken = login(manager);
-        var created = mvc.perform(post("/api/v1/attendance-records")
-                .header("Authorization", "Bearer " + managerToken)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(mapper.writeValueAsString(Map.ofEntries(
-                    Map.entry("employeeId", employee.getId()),
-                    Map.entry("workDate", "2026-11-07"),
-                    Map.entry("shiftName", "Ca sáng"),
-                    Map.entry("checkType", "CHECK_OUT"),
-                    Map.entry("photoUrl", "https://example.com/timemark/checkout.jpg"),
-                    Map.entry("photoLocation", "268 Lý Thường Kiệt, Quận 10"),
-                    Map.entry("deviceLocation", "10.7726, 106.6579"),
-                    Map.entry("deviceLatitude", 10.7726),
-                    Map.entry("deviceLongitude", 106.6579),
-                    Map.entry("status", "EARLY_LEAVE"),
-                    Map.entry("verificationNote", "Về sớm 10 phút")
-                ))))
-            .andExpect(status().isCreated())
-            .andExpect(jsonPath("status").value("EARLY_LEAVE"))
-            .andReturn();
-
-        var recordId = mapper.readTree(created.getResponse().getContentAsString()).get("id").asText();
-        var otherManagerToken = login(otherManager);
-        mvc.perform(get("/api/v1/attendance-records/" + recordId)
-                .header("Authorization", "Bearer " + otherManagerToken))
+    @Test void uploadIsPrivateUniqueAndResultsIncludeAbsence() throws Exception {
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM flyway_schema_history WHERE version = '7' AND success", Integer.class)).isEqualTo(1);
+        mvc.perform(upload(shiftId, false).header("Authorization", "Bearer " + employeeToken))
+            .andExpect(status().isBadRequest());
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM attendance_events", Integer.class)).isZero();
+        mvc.perform(upload(shiftId, true).header("Authorization", "Bearer " + outsiderToken))
+            .andExpect(status().isForbidden());
+        var created = mapper.readTree(mvc.perform(upload(shiftId, true).header("Authorization", "Bearer " + employeeToken))
+            .andExpect(status().isCreated()).andExpect(jsonPath("$.type").value("CHECK_IN"))
+            .andReturn().getResponse().getContentAsString());
+        var photoId = created.get("id").asText();
+        JsonNode recordPage = mapper.readTree(mvc.perform(get("/api/v1/attendance-records")
+            .header("Authorization", "Bearer " + managerToken))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(recordPage.get("totalElements").asInt()).isEqualTo(1);
+        assertThat(recordPage.at("/items/0/id").asText()).isEqualTo(photoId);
+        assertThat(recordPage.at("/items/0/status").asText()).isEqualTo("ON_TIME");
+        assertThat(recordPage.at("/items/0/photoUrl").asText())
+            .isEqualTo("/api/v1/attendance/events/" + photoId + "/photo");
+        mvc.perform(get("/api/v1/attendance-records/{id}", photoId)
+            .header("Authorization", "Bearer " + outsiderToken))
             .andExpect(status().isNotFound());
+        mvc.perform(upload(shiftId, true).header("Authorization", "Bearer " + employeeToken))
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("ALREADY_RECORDED"));
+        mvc.perform(delete("/api/v1/work-schedules/{id}", shiftId).header("Authorization", "Bearer " + managerToken))
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("SCHEDULE_HAS_ATTENDANCE"));
+        mvc.perform(get("/api/v1/attendance/events/{id}/photo", photoId).header("Authorization", "Bearer " + managerToken))
+            .andExpect(status().isOk()).andExpect(content().contentType(MediaType.IMAGE_JPEG));
+        mvc.perform(get("/api/v1/attendance/events/{id}/photo", photoId).header("Authorization", "Bearer " + outsiderToken))
+            .andExpect(status().isForbidden());
+        var today = LocalDate.now(ZoneId.of("Asia/Ho_Chi_Minh"));
+        JsonNode result = mapper.readTree(mvc.perform(get("/api/v1/attendance/results")
+            .header("Authorization", "Bearer " + managerToken)
+            .param("from", today.minusDays(1).toString()).param("to", today.toString()))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(result.get("items").size()).isEqualTo(2);
+        assertThat(result.get("items").toString()).contains("ABSENT").contains("IN_PROGRESS");
     }
 }
