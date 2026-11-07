@@ -25,19 +25,22 @@ public class AttendanceService {
     private final WorkScheduleApi schedules;
     private final IdentityApi identity;
     private final TimemarkReader timemarkReader;
+    private final AttendanceVerificationService verification;
     public AttendanceService(AttendanceEventRepository events, WorkScheduleApi schedules, IdentityApi identity,
-                             TimemarkReader timemarkReader) {
-        this.events = events; this.schedules = schedules; this.identity = identity; this.timemarkReader = timemarkReader;
+                             TimemarkReader timemarkReader, AttendanceVerificationService verification) {
+        this.events = events; this.schedules = schedules; this.identity = identity;
+        this.timemarkReader = timemarkReader; this.verification = verification;
     }
 
     public TimemarkAnalysisResponse analyzeTimemark(MultipartFile image) { return timemarkReader.read(image); }
 
     @Transactional
     public EventResponse record(UUID actorId, UUID scheduleId, EventType type, Instant locatedAt,
-                                Double latitude, Double longitude, Double accuracy, MultipartFile photo) {
+                                Double latitude, Double longitude, Double accuracy,
+                                TimemarkEvidence timemark, MultipartFile photo) {
         var actor = identity.person(actorId);
         if (actor.locked() || !actor.role().equals("EMPLOYEE")) throw forbidden();
-        if (scheduleId == null || type == null || locatedAt == null || latitude == null || longitude == null || accuracy == null)
+        if (scheduleId == null || type == null || locatedAt == null || latitude == null || longitude == null || accuracy == null || timemark == null)
             throw invalid("Cần chọn ca, lượt vào/ra và cấp vị trí hiện tại khi gửi ảnh.");
         if (!Double.isFinite(latitude) || latitude < -90 || latitude > 90 ||
             !Double.isFinite(longitude) || longitude < -180 || longitude > 180 ||
@@ -47,6 +50,7 @@ public class AttendanceService {
         if (locatedAt.isAfter(receivedAt.plusSeconds(30)) ||
             Duration.between(locatedAt, receivedAt).compareTo(Duration.ofMinutes(2)) > 0)
             throw invalid("Vị trí đã cũ. Hãy bật định vị và gửi lại ảnh.");
+        verification.verify(latitude, longitude, timemark, receivedAt);
         if (photo == null || photo.isEmpty() || photo.getSize() > MAX_PHOTO_BYTES)
             throw invalid("Ảnh Timemark phải có dung lượng từ 1 byte đến 5 MB.");
         byte[] bytes;
