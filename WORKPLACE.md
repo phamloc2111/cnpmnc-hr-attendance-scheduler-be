@@ -12,10 +12,12 @@ Quản lý hoặc quản trị mở **Điểm làm việc** trong menu web. Cấ
 
 PUT nhận `latitude`, `longitude`, `radiusMeters`, `gpsToleranceMeters`, `version`. Lần đầu version 0; các lần sau dùng version nhận từ server. Cập nhật cũ trả 409 `STALE_WORKPLACE`, giữ nguyên cấu hình mới hơn. Giao diện giữ dữ liệu đang nhập và cho tải lại.
 
-Flyway **V10** tạo bảng `organization_workplace_settings`, tối đa một cấu hình. Cấu hình được lưu trong PostgreSQL cùng người cập nhật và giờ UTC; áp dụng ngay cho lượt vào/ra tiếp theo, không cần khởi động lại backend. Migration không tự tạo tọa độ giả và không sửa dữ liệu điểm danh cũ.
+Flyway **V11** tạo bảng `organization_workplace_settings`, tối đa một cấu hình. Cấu hình được lưu trong PostgreSQL cùng người cập nhật và giờ UTC; áp dụng ngay cho lượt vào/ra tiếp theo, không cần khởi động lại backend. Migration không tự tạo tọa độ giả và không sửa dữ liệu điểm danh cũ.
 
 Ưu tiên cấu hình đã lưu trên web. Nếu chưa có bản ghi, backend vẫn hỗ trợ cấu hình môi trường hợp lệ `WORKPLACE_LATITUDE`, `WORKPLACE_LONGITUDE`, `WORKPLACE_RADIUS_METERS`, `WORKPLACE_GPS_TOLERANCE_METERS` (mặc định 30). Nếu cả hai nguồn đều chưa có tọa độ, điểm danh vẫn trả `WORKPLACE_NOT_CONFIGURED` cho tới khi quản lý thiết lập.
 
-Triển khai backend mới để Flyway chạy V10, triển khai frontend, sau đó quản lý nhập tọa độ thật và bấm **Lưu cấu hình**. Không tự thay `.env` hoặc tự suy đoán vị trí nơi làm việc.
+Triển khai backend mới để Flyway chạy V11, triển khai frontend, sau đó quản lý nhập tọa độ thật và bấm **Lưu cấu hình**. Không tự thay `.env` hoặc tự suy đoán vị trí nơi làm việc.
 
 Camera và Geolocation cần HTTPS hoặc localhost cùng quyền trình duyệt. Tọa độ và độ chính xác vẫn là dữ liệu do thiết bị gửi; cấu hình bán kính không phải cơ chế chứng thực độc lập chống giả GPS.
+
+Recovery for a lost V10 migration: see [MIGRATION_RECOVERY.md](MIGRATION_RECOVERY.md). V10 contains reconstructed shift registrations; workplace settings are V11.
