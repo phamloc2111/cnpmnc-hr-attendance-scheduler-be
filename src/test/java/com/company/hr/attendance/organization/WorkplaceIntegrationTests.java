@@ -29,6 +29,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("test")
 @Import(PostgresTestConfig.class)
 class WorkplaceIntegrationTests {
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    com.company.hr.attendance.organization.infrastructure.GoongPlacesClient places;
+
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper mapper;
     @Autowired AccountRepository accounts;
@@ -134,5 +137,38 @@ class WorkplaceIntegrationTests {
             .param("locatedAt", Instant.now().toString()).param("latitude", "10.7726").param("longitude", "106.6579")
             .param("accuracyMeters", "5").param("timemarkCapturedAt", Instant.now().toString())
             .param("timemarkLatitude", "10.7726").param("timemarkLongitude", "106.6579");
+    }
+
+    @Test void managersAndAdminsCanSearchAndResolveWithoutSavingSettings() throws Exception {
+        org.mockito.Mockito.when(places.search("Bách Khoa")).thenReturn(java.util.List.of(
+            new com.company.hr.attendance.organization.api.PlaceModels.Suggestion("id/+=", "Đại học Bách Khoa")));
+        org.mockito.Mockito.when(places.detail("id/+=")).thenReturn(
+            new com.company.hr.attendance.organization.api.PlaceModels.Place("id/+=", "268 Lý Thường Kiệt", 10.7726, 106.6579));
+        mvc.perform(get("/api/v1/workplace-settings/places").param("q", "  Bách Khoa  ").header("Authorization", "Bearer " + managerToken))
+            .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"))
+            .andExpect(jsonPath("$[0].placeId").value("id/+=")).andExpect(jsonPath("$[0].label").value("Đại học Bách Khoa"));
+        mvc.perform(get("/api/v1/workplace-settings/places/detail").param("placeId", "id/+=").header("Authorization", "Bearer " + adminToken))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.latitude").value(10.7726)).andExpect(jsonPath("$.longitude").value(106.6579));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM organization_workplace_settings", Integer.class)).isZero();
+    }
+    @Test void addressSearchRejectsAnonymousEmployeesAndLockedManagersBeforeProviderCalls() throws Exception {
+        mvc.perform(get("/api/v1/workplace-settings/places").param("q", "Bách Khoa")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/v1/workplace-settings/places/detail").param("placeId", "id").header("Authorization", "Bearer " + employeeToken))
+            .andExpect(status().isForbidden());
+        var manager = accounts.findById(managerId).orElseThrow(); manager.setLocked(true); accounts.saveAndFlush(manager);
+        mvc.perform(get("/api/v1/workplace-settings/places").param("q", "Bách Khoa").header("Authorization", "Bearer " + managerToken))
+            .andExpect(status().isUnauthorized());
+        org.mockito.Mockito.verifyNoInteractions(places);
+    }
+    @Test void addressQueriesAreValidatedAndErrorsUseTheExistingApiContract() throws Exception {
+        mvc.perform(get("/api/v1/workplace-settings/places").param("q", "ab").header("Authorization", "Bearer " + managerToken))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_PLACE_QUERY"));
+        mvc.perform(get("/api/v1/workplace-settings/places/detail").param("placeId", " ").header("Authorization", "Bearer " + managerToken))
+            .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verifyNoInteractions(places);
+        org.mockito.Mockito.when(places.search("Bách Khoa")).thenThrow(new com.company.hr.attendance.organization.application.WorkplaceException(
+            org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "PLACE_SEARCH_NOT_CONFIGURED", "Tìm địa chỉ chưa được cấu hình."));
+        mvc.perform(get("/api/v1/workplace-settings/places").param("q", "Bách Khoa").header("Authorization", "Bearer " + managerToken))
+            .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.code").value("PLACE_SEARCH_NOT_CONFIGURED"));
     }
 }

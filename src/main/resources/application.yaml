@@ -39,6 +39,9 @@ management:
         enabled: true
 
 app:
+  maps:
+    goong:
+      api-key: ${GOONG_API_KEY:}
   attendance:
     grace-minutes: ${ATTENDANCE_GRACE_MINUTES:5}
     verification:

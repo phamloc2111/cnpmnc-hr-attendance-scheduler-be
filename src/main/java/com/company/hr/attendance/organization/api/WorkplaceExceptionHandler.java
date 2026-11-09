@@ -11,12 +11,12 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.*;
 
-@RestControllerAdvice(assignableTypes = WorkplaceController.class)
+@RestControllerAdvice(assignableTypes = {WorkplaceController.class, WorkplacePlacesController.class})
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class WorkplaceExceptionHandler {
     @ExceptionHandler(WorkplaceException.class)
     ResponseEntity<ApiError> operation(WorkplaceException error, HttpServletRequest request) {
-        return ResponseEntity.status(error.getStatus()).body(ApiError.of(error.getCode(), error.getMessage(), request.getRequestURI()));
+        return ResponseEntity.status(error.getStatus()).cacheControl(org.springframework.http.CacheControl.noStore()).body(ApiError.of(error.getCode(), error.getMessage(), request.getRequestURI()));
     }
     @ExceptionHandler({MethodArgumentNotValidException.class, HttpMessageNotReadableException.class, ConstraintViolationException.class})
     ResponseEntity<ApiError> invalid(Exception error, HttpServletRequest request) {
