@@ -36,6 +36,7 @@ public final class AttendanceClassifier {
             early ? Departure.EARLY_LEAVE : Departure.ON_TIME, overall, lateMinutes, earlyMinutes);
     }
     private static long ceilingMinutes(Duration duration) {
-        return Math.max(0, (duration.toSeconds() + 59) / 60);
+        long wholeMinutes = duration.toMinutes();
+        return Math.max(0, wholeMinutes + (duration.minusMinutes(wholeMinutes).isZero() ? 0 : 1));
     }
 }
