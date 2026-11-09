@@ -26,7 +26,7 @@ class AttendanceServiceTest {
     private final WorkScheduleApi schedules = mock(WorkScheduleApi.class);
     private final IdentityApi identity = mock(IdentityApi.class);
     private final TimemarkReader timemarkReader = mock(TimemarkReader.class);
-    private final AttendanceVerificationService verification = new AttendanceVerificationService(10.0, 106.0, 100, 300);
+    private final AttendanceVerificationService verification = new AttendanceVerificationService(() -> java.util.Optional.of(new com.company.hr.attendance.organization.WorkplaceApi.Configuration(10.0, 106.0, 100, 30, 0, null, null)), 300);
     private final AttendanceService service = new AttendanceService(
         events, records, schedules, identity, timemarkReader, verification, 5);
     private final UUID employee = UUID.randomUUID();

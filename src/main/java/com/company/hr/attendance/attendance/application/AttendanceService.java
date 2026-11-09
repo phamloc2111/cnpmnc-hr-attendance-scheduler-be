@@ -60,7 +60,7 @@ public class AttendanceService {
         if (locatedAt.isAfter(receivedAt.plusSeconds(30)) ||
             Duration.between(locatedAt, receivedAt).compareTo(Duration.ofMinutes(2)) > 0)
             throw invalid("Vị trí đã cũ. Hãy bật định vị và gửi lại ảnh.");
-        verification.verify(latitude, longitude, timemark, receivedAt);
+        verification.verify(latitude, longitude, accuracy, timemark, receivedAt);
         if (photo == null || photo.isEmpty() || photo.getSize() > MAX_PHOTO_BYTES)
             throw invalid("Ảnh Timemark phải có dung lượng từ 1 byte đến 5 MB.");
         byte[] bytes;
