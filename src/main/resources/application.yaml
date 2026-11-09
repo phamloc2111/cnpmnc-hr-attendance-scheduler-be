@@ -45,6 +45,7 @@ app:
       workplace-latitude: ${WORKPLACE_LATITUDE:}
       workplace-longitude: ${WORKPLACE_LONGITUDE:}
       radius-meters: ${WORKPLACE_RADIUS_METERS:100}
+      gps-tolerance-meters: ${WORKPLACE_GPS_TOLERANCE_METERS:30}
       max-time-difference-seconds: ${TIMEMARK_MAX_TIME_DIFFERENCE_SECONDS:300}
   auth:
     jwt-secret: ${JWT_SECRET:}

@@ -1,6 +1,7 @@
 package com.company.hr.attendance.attendance.application;
 
 import com.company.hr.attendance.attendance.api.AttendanceModels.TimemarkEvidence;
+import com.company.hr.attendance.organization.WorkplaceApi;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -8,65 +9,53 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
-/** Fast, local second-layer validation after the separate Timemark AI extraction. */
 @Service
 public class AttendanceVerificationService {
-    private final Double workplaceLatitude;
-    private final Double workplaceLongitude;
-    private final double radiusMeters;
+    private final WorkplaceApi workplaces;
     private final long maxTimeDifferenceSeconds;
-
-    public AttendanceVerificationService(
-        @Value("${app.attendance.verification.workplace-latitude:}") Double workplaceLatitude,
-        @Value("${app.attendance.verification.workplace-longitude:}") Double workplaceLongitude,
-        @Value("${app.attendance.verification.radius-meters:100}") double radiusMeters,
-        @Value("${app.attendance.verification.max-time-difference-seconds:300}") long maxTimeDifferenceSeconds
-    ) {
-        this.workplaceLatitude = workplaceLatitude;
-        this.workplaceLongitude = workplaceLongitude;
-        this.radiusMeters = radiusMeters;
-        this.maxTimeDifferenceSeconds = maxTimeDifferenceSeconds;
+    public AttendanceVerificationService(WorkplaceApi workplaces,
+        @Value("${app.attendance.verification.max-time-difference-seconds:300}") long maxTimeDifferenceSeconds) {
+        this.workplaces = workplaces; this.maxTimeDifferenceSeconds = maxTimeDifferenceSeconds;
     }
-
-    public void verify(Double deviceLatitude, Double deviceLongitude, TimemarkEvidence timemark, Instant serverTime) {
-        if (workplaceLatitude == null || workplaceLongitude == null || radiusMeters <= 0 || maxTimeDifferenceSeconds < 0) {
-            throw new AttendanceException(HttpStatus.SERVICE_UNAVAILABLE, "WORKPLACE_NOT_CONFIGURED",
-                "Chưa cấu hình tọa độ hoặc bán kính điểm làm việc. Vui lòng liên hệ quản lý.");
+    public void verify(Double deviceLatitude, Double deviceLongitude, Double accuracyMeters,
+                       TimemarkEvidence timemark, Instant serverTime) {
+        var workplace = workplaces.current().orElseThrow(() -> new AttendanceException(HttpStatus.SERVICE_UNAVAILABLE,
+            "WORKPLACE_NOT_CONFIGURED", "Chưa cấu hình điểm làm việc. Vui lòng liên hệ quản lý vào mục Điểm làm việc để thiết lập tọa độ và bán kính."));
+        if (accuracyMeters == null || !Double.isFinite(accuracyMeters) || accuracyMeters < 0 ||
+            accuracyMeters > workplace.gpsToleranceMeters()) {
+            throw new AttendanceException(HttpStatus.UNPROCESSABLE_ENTITY, "GPS_ACCURACY_TOO_LOW",
+                "GPS chưa đủ chính xác. Mức sai số cho phép là ±" + workplace.gpsToleranceMeters() +
+                "m. Hãy bật vị trí chính xác, đến nơi thoáng và thử lại.");
         }
         var reasons = new ArrayList<String>();
-        validateCoordinates(deviceLatitude, deviceLongitude, "Định vị điện thoại", reasons);
-        if (timemark == null) {
-            reasons.add("Không có thời gian đọc từ ảnh Timemark");
-        } else {
-            validateCoordinates(timemark.latitude(), timemark.longitude(), "Vị trí trên ảnh Timemark", reasons);
-            if (timemark.capturedAt() == null || Duration.between(timemark.capturedAt(), serverTime).abs().getSeconds() > maxTimeDifferenceSeconds) {
+        validateCoordinates(deviceLatitude, deviceLongitude, "Định vị điện thoại", workplace, reasons);
+        if (timemark == null) reasons.add("Không có thời gian đọc từ ảnh Timemark");
+        else {
+            validateCoordinates(timemark.latitude(), timemark.longitude(), "Vị trí trên ảnh Timemark", workplace, reasons);
+            if (timemark.capturedAt() == null || maxTimeDifferenceSeconds < 0 ||
+                Duration.between(timemark.capturedAt(), serverTime).abs().compareTo(Duration.ofSeconds(maxTimeDifferenceSeconds)) > 0) {
                 reasons.add("Thời gian trên ảnh Timemark không khớp giờ máy chủ");
             }
         }
-        if (!reasons.isEmpty()) {
-            throw new AttendanceException(HttpStatus.UNPROCESSABLE_ENTITY, "ATTENDANCE_VERIFICATION_FAILED",
-                String.join("; ", reasons) + ". Vui lòng tải lại ảnh hoặc gửi giải trình.");
-        }
+        if (!reasons.isEmpty()) throw new AttendanceException(HttpStatus.UNPROCESSABLE_ENTITY, "ATTENDANCE_VERIFICATION_FAILED",
+            String.join("; ", reasons) + ". Vui lòng chụp và gửi lại ảnh tại điểm làm việc.");
     }
-
-    private void validateCoordinates(Double latitude, Double longitude, String source, ArrayList<String> reasons) {
-        if (latitude == null || longitude == null) {
-            reasons.add(source + " không có tọa độ để đối chiếu");
-            return;
+    private void validateCoordinates(Double latitude, Double longitude, String source, WorkplaceApi.Configuration workplace,
+                                     ArrayList<String> reasons) {
+        if (latitude == null || longitude == null || !Double.isFinite(latitude) || !Double.isFinite(longitude) ||
+            latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+            reasons.add(source + " có tọa độ không hợp lệ"); return;
         }
-        var distance = distanceMeters(workplaceLatitude, workplaceLongitude, latitude, longitude);
-        if (distance > radiusMeters) {
-            reasons.add(source + " nằm ngoài bán kính điểm làm việc (" + Math.round(distance) + " m)");
-        }
+        var distance = distanceMeters(workplace.latitude(), workplace.longitude(), latitude, longitude);
+        var allowed = workplace.radiusMeters() + workplace.gpsToleranceMeters();
+        if (distance > allowed + .000001) reasons.add(source + " nằm ngoài vùng điểm danh (cách " + Math.round(distance) +
+            "m, bán kính " + workplace.radiusMeters() + "m + dung sai " + workplace.gpsToleranceMeters() + "m)");
     }
-
     private static double distanceMeters(double lat1, double lon1, double lat2, double lon2) {
-        double earthRadiusMeters = 6_371_000;
-        double deltaLatitude = Math.toRadians(lat2 - lat1);
-        double deltaLongitude = Math.toRadians(lon2 - lon1);
+        double deltaLatitude = Math.toRadians(lat2 - lat1), deltaLongitude = Math.toRadians(lon2 - lon1);
         double a = Math.sin(deltaLatitude / 2) * Math.sin(deltaLatitude / 2)
-            + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
-            * Math.sin(deltaLongitude / 2) * Math.sin(deltaLongitude / 2);
-        return 2 * earthRadiusMeters * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) * Math.sin(deltaLongitude / 2) * Math.sin(deltaLongitude / 2);
+        a = Math.max(0, Math.min(1, a));
+        return 2 * 6_371_000 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 }

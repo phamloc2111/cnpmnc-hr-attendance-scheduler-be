@@ -11,18 +11,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class AttendanceVerificationServiceTest {
     private final AttendanceVerificationService verification =
-        new AttendanceVerificationService(10.7726, 106.6579, 100, 300);
+        new AttendanceVerificationService(() -> java.util.Optional.of(new com.company.hr.attendance.organization.WorkplaceApi.Configuration(10.7726, 106.6579, 100, 30, 0, null, null)), 300);
     private final Instant serverTime = Instant.parse("2026-11-07T01:00:00Z");
 
     @Test
     void verify_acceptsPhotoAndDeviceWithinWorkplaceRadiusWithMatchingTime() {
-        verification.verify(10.7727, 106.6579,
+        verification.verify(10.7727, 106.6579, 5.0,
             evidence(10.77265, 106.65795, serverTime.minusSeconds(120)), serverTime);
     }
 
     @Test
     void verify_rejectsWithoutPersistingWhenEitherLocationOrTimeFails() {
-        assertThatThrownBy(() -> verification.verify(10.80, 106.6579,
+        assertThatThrownBy(() -> verification.verify(10.80, 106.6579, 5.0,
             evidence(10.7726, 106.6579, serverTime.minusSeconds(301)), serverTime))
             .isInstanceOfSatisfying(AttendanceException.class, error -> {
                 assertThat(error.getCode()).isEqualTo("ATTENDANCE_VERIFICATION_FAILED");
