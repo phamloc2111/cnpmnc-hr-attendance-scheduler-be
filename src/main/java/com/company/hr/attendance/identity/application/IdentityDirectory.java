@@ -40,6 +40,18 @@ public class IdentityDirectory implements IdentityApi {
         return accounts.findAll(filters, PageRequest.of(page, size,
             Sort.by("displayName", "id"))).map(this::view);
     }
+    public Page<Person> employeePage(UUID actorId, String query, int page, int size) {
+        var actor = person(actorId);
+        if (actor.locked() || !Set.of("MANAGER", "ADMIN").contains(actor.role()))
+            throw new AccessDeniedException("Management access required");
+        if (actor.role().equals("MANAGER")) return managedEmployees(actorId, query, page, size);
+        Specification<Account> filters = (root, ignored, cb) -> cb.equal(root.get("role"), Role.EMPLOYEE);
+        if (query != null && !query.isBlank()) {
+            String search = "%" + query.strip().toLowerCase(Locale.ROOT).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
+            filters = filters.and((root, ignored, cb) -> cb.or(cb.like(cb.lower(root.get("displayName")), search, '\\'), cb.like(cb.lower(root.get("email")), search, '\\')));
+        }
+        return accounts.findAll(filters, PageRequest.of(page, size, Sort.by("displayName", "id"))).map(this::view);
+    }
     public boolean canReceiveRegistrationReminders(UUID employeeId, UUID sessionId) {
         // Push consent outlives JWT expiry; explicit logout/revocation removes the session row.
         var account=accounts.findById(employeeId);var session=sessions.findById(sessionId);
