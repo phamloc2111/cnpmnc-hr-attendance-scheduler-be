@@ -47,7 +47,7 @@ class RegistrationIntegrationTests {
     void clean() {
         jdbc.update("DELETE FROM shift_registrations"); jdbc.update("DELETE FROM registration_reopens");
         jdbc.update("DELETE FROM attendance_events"); jdbc.update("DELETE FROM attendance_records"); jdbc.update("DELETE FROM work_schedules");
-        templates.deleteAll(); sessions.deleteAll(); jdbc.update("DELETE FROM identity_account_skills"); accounts.deleteAll();
+        templates.deleteAll(); sessions.deleteAll(); jdbc.update("DELETE FROM identity_account_skills"); jdbc.update("UPDATE identity_accounts SET manager_id=NULL"); accounts.deleteAll();
     }
     String token(String name, Role role) throws Exception {
         var account = accounts.saveAndFlush(new Account(name+"@example.com",passwords.encode("Registration-test-password!"),name,role));
@@ -126,4 +126,117 @@ class RegistrationIntegrationTests {
             assertThat(jdbc.queryForObject("SELECT count(*) FROM shift_registrations WHERE employee_id=?",Integer.class,employeeId)).isEqualTo(1);
         } finally { pool.shutdownNow(); }
     }
+
+    UUID managerId() { return accounts.findByEmail("registration-manager@example.com").orElseThrow().getId(); }
+    void assign(UUID employeeId, UUID managerId) {
+        jdbc.update("UPDATE identity_accounts SET manager_id=? WHERE id=?",managerId,employeeId);
+    }
+    org.springframework.test.web.servlet.ResultActions access(String actor, UUID id, String week, boolean reopened, String revision) throws Exception {
+        return mvc.perform(put("/api/v1/registrations/management/"+id+"/access").header("Authorization","Bearer "+actor)
+            .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(Map.of("weekStart",week,"reopened",reopened,"accessRevision",revision))));
+    }
+    String reopen() throws Exception {
+        assign(employeeId,managerId());
+        return mapper.readTree(access(manager,employeeId,WEEK,true,"closed").andExpect(status().isOk())
+            .andExpect(jsonPath("$.state").value("REOPENED")).andReturn().getResponse().getContentAsString()).path("accessRevision").asText();
+    }
+    @Test void reopenedEmployeeAloneCanEditTheSelectedWeekAndRelockingPreservesSelections() throws Exception {
+        save(revision(employee),List.of(morning)).andExpect(status().isOk());
+        now.set(Instant.parse("2026-11-15T17:00:00Z")); String grant=reopen();
+        mvc.perform(get("/api/v1/registrations/me").param("weekStart",WEEK).header("Authorization","Bearer "+employee))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.editable").value(true)).andExpect(jsonPath("$.reopened").value(true));
+        save(revision(employee),List.of(night)).andExpect(status().isOk());
+        mvc.perform(put("/api/v1/registrations/me").header("Authorization","Bearer "+other).contentType(MediaType.APPLICATION_JSON)
+            .content(body(revision(other),List.of(morning)))).andExpect(status().isConflict());
+        access(manager,employeeId,WEEK,false,grant).andExpect(status().isOk()).andExpect(jsonPath("$.state").value("CLOSED"));
+        save(revision(employee),List.of()).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("REGISTRATION_CLOSED"));
+        assertThat(jdbc.queryForObject("SELECT shift_template_id FROM shift_registrations WHERE employee_id=?",UUID.class,employeeId)).isEqualTo(night);
+    }
+    @Test void managementListIsScopedSearchablePagedAndDefaultsToTheCurrentVietnameseWeek() throws Exception {
+        assign(employeeId,managerId());assign(otherId,managerId());
+        save(revision(employee),List.of(morning,night)).andExpect(status().isOk());
+        now.set(Instant.parse("2026-11-15T17:00:00Z"));reopen();
+        mvc.perform(get("/api/v1/registrations/management").param("size","1").header("Authorization","Bearer "+manager))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.weekStart").value(WEEK)).andExpect(jsonPath("$.totalElements").value(2))
+            .andExpect(jsonPath("$.totalPages").value(2)).andExpect(jsonPath("$.items[0].selectionCount").value(2))
+            .andExpect(jsonPath("$.items[0].state").value("REOPENED"));
+        mvc.perform(get("/api/v1/registrations/management").param("q","registration-b@example.com").header("Authorization","Bearer "+manager))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1)).andExpect(jsonPath("$.items[0].employeeId").value(otherId.toString()));
+        mvc.perform(get("/api/v1/registrations/management").param("q","%").header("Authorization","Bearer "+manager))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.items").isEmpty());
+        mvc.perform(get("/api/v1/registrations/management").param("size","101").header("Authorization","Bearer "+manager)).andExpect(status().isBadRequest());
+    }
+    @Test void onlyAnAssignedManagerCanReadOrChangeRegistrationAccess() throws Exception {
+        now.set(Instant.parse("2026-11-15T17:00:00Z"));
+        for(String actor:List.of(employee,admin)){
+            mvc.perform(get("/api/v1/registrations/management").header("Authorization","Bearer "+actor)).andExpect(status().isForbidden());
+            access(actor,employeeId,WEEK,true,"closed").andExpect(status().isForbidden());
+        }
+        access(manager,employeeId,WEEK,true,"closed").andExpect(status().isForbidden());
+        assign(employeeId,managerId());reopen();
+        String foreign=token("foreign-manager",Role.MANAGER);
+        access(foreign,employeeId,WEEK,false,"closed").andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/registrations/management").header("Authorization","Bearer "+foreign))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.items").isEmpty());
+        access(manager,managerId(),WEEK,true,"closed").andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/registrations/management")).andExpect(status().isUnauthorized());
+    }
+    @Test void cannotOpenBeforeAutomaticCloseAndMondayBoundaryAllowsAnIndividualReopen() throws Exception {
+        assign(employeeId,managerId());
+        access(manager,employeeId,WEEK,true,"closed").andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("REGISTRATION_NOT_CLOSED"));
+        access(manager,employeeId,"2026-11-17",true,"closed").andExpect(status().isBadRequest());
+        now.set(Instant.parse("2026-11-15T16:59:59.999Z"));
+        access(manager,employeeId,WEEK,true,"closed").andExpect(status().isConflict());
+        now.set(Instant.parse("2026-11-15T17:00:00Z"));reopen();
+        access(manager,employeeId,"2026-11-23",true,"closed").andExpect(status().isConflict());
+    }
+    @Test void staleManagementTabsCannotUndoANewerGrantAndReopenIsIdempotentForTheSameRevision() throws Exception {
+        now.set(Instant.parse("2026-11-16T03:00:00Z"));String grant=reopen();
+        access(manager,employeeId,WEEK,false,"closed").andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("STALE_REGISTRATION_ACCESS"));
+        access(manager,employeeId,WEEK,true,grant).andExpect(status().isOk()).andExpect(jsonPath("$.accessRevision").value(grant));
+        access(manager,employeeId,WEEK,false,grant).andExpect(status().isOk());String next=reopen();
+        assertThat(next).isNotEqualTo(grant);
+        access(manager,employeeId,WEEK,false,grant).andExpect(status().isConflict());
+    }
+    @Test void lockedAccountsCannotBeReopenedAndAChangeOfManagerInvalidatesTheOldGrant() throws Exception {
+        assign(employeeId,managerId());now.set(Instant.parse("2026-11-16T03:00:00Z"));
+        var person=accounts.findById(employeeId).orElseThrow();person.setLocked(true);accounts.saveAndFlush(person);
+        access(manager,employeeId,WEEK,true,"closed").andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("REGISTRATION_EMPLOYEE_LOCKED"));
+        person=accounts.findById(employeeId).orElseThrow();person.setLocked(false);accounts.saveAndFlush(person);reopen();
+        token("replacement-manager",Role.MANAGER);
+        assign(employeeId,accounts.findByEmail("replacement-manager@example.com").orElseThrow().getId());
+        mvc.perform(get("/api/v1/registrations/me").param("weekStart",WEEK).header("Authorization","Bearer "+employee))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.editable").value(false)).andExpect(jsonPath("$.reopened").value(false));
+        save(revision(employee),List.of(morning)).andExpect(status().isConflict());
+    }
+    @Test void grantsNeverUnlockAnotherWeekOrCreateAnAssignedSchedule() throws Exception {
+        now.set(Instant.parse("2026-11-16T03:00:00Z"));assign(employeeId,managerId());
+        access(manager,employeeId,"2026-11-09",true,"closed").andExpect(status().isOk());
+        save(revision(employee),List.of(morning)).andExpect(status().isConflict());
+        mvc.perform(get("/api/v1/registrations/me").param("weekStart","2026-11-09").header("Authorization","Bearer "+employee))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.editable").value(true));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM work_schedules",Integer.class)).isZero();
+    }
+    @Test void concurrentManagementReopensCreateExactlyOneGrantAndRejectAStaleRequest() throws Exception {
+        now.set(Instant.parse("2026-11-16T03:00:00Z"));assign(employeeId,managerId());
+        var pool=Executors.newFixedThreadPool(2);var barrier=new CyclicBarrier(2);
+        try{
+            var requests=List.of(1,2).stream().map(ignored->pool.submit(()->{
+                barrier.await(10,TimeUnit.SECONDS);return access(manager,employeeId,WEEK,true,"closed").andReturn().getResponse().getStatus();
+            })).toList();
+            assertThat(List.of(requests.get(0).get(15,TimeUnit.SECONDS),requests.get(1).get(15,TimeUnit.SECONDS))).containsExactlyInAnyOrder(200,409);
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM registration_reopens",Integer.class)).isEqualTo(1);
+        }finally{pool.shutdownNow();}
+    }
+    @Test void closingAndSavingAreSerializedAndNoSaveIsAcceptedAfterTheCloseCompletes() throws Exception {
+        now.set(Instant.parse("2026-11-16T03:00:00Z"));String grant=reopen(),rev=revision(employee);
+        var pool=Executors.newFixedThreadPool(2);var barrier=new CyclicBarrier(2);
+        try{
+            var close=pool.submit(()->{barrier.await(10,TimeUnit.SECONDS);return access(manager,employeeId,WEEK,false,grant).andReturn().getResponse().getStatus();});
+            var save=pool.submit(()->{barrier.await(10,TimeUnit.SECONDS);return save(rev,List.of(morning)).andReturn().getResponse().getStatus();});
+            assertThat(close.get(15,TimeUnit.SECONDS)).isEqualTo(200);assertThat(save.get(15,TimeUnit.SECONDS)).isIn(200,409);
+            save(revision(employee),List.of(night)).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("REGISTRATION_CLOSED"));
+        }finally{pool.shutdownNow();}
+    }
+
 }

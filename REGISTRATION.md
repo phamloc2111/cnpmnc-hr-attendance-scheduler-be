@@ -2,7 +2,7 @@
 
 Nhân viên chọn các **mẫu ca mong muốn cho cả tuần**, lưu và chỉnh sửa trong ngày Chủ nhật trước tuần đó, theo `Asia/Ho_Chi_Minh` (UTC+7). Mở lúc 00:00 Chủ nhật, đóng lúc 00:00 thứ Hai; toàn bộ phút 23:59 Chủ nhật vẫn được lưu. Ngoài khung giờ chỉ được xem. Thời gian máy chủ quyết định, không phụ thuộc đồng hồ thiết bị.
 
-Đăng ký là nguyện vọng, **không tự tạo lịch phân ca**. Schema V10 lưu mẫu ca theo tuần, không lưu ngày cụ thể trong tuần. Chức năng mở lại cho từng nhân viên thuộc SYNC-26, chưa bao gồm trong SYNC-25.
+Đăng ký là nguyện vọng, **không tự tạo lịch phân ca**. Schema V10 lưu mẫu ca theo tuần, không lưu ngày cụ thể trong tuần. Chức năng mở lại cho từng nhân viên được bổ sung ở SYNC-26 (xem bên dưới).
 
 ## API (Bearer token, chỉ EMPLOYEE)
 
@@ -32,3 +32,32 @@ Module registration dùng public `IdentityApi` và `ShiftCatalogApi`; không tru
 ## Kiểm tra
 
 `./mvnw -Dtest=RegistrationWindowTests,RegistrationIntegrationTests test` kiểm tra ranh giới Chủ nhật theo UTC+7, lưu/sửa/xóa, tuần cũ, phân quyền và sở hữu, mẫu ca không hợp lệ, phân trang, hai request lưu đồng thời. Integration tests dùng PostgreSQL Testcontainers cô lập, không dùng dữ liệu thật.
+
+## SYNC-26 — Tự khóa và mở lại theo nhân viên
+
+Cổng tự khóa sau toàn bộ phút 23:59 Chủ nhật, tức thứ Hai 00:00 giờ Việt Nam. Backend kiểm tra thời gian ở mỗi lần lưu, không cần cron hay thay đổi cấu hình môi trường.
+
+Quản lý đang hoạt động chỉ được xem và mở/khóa lại cho nhân viên mình phụ trách. EMPLOYEE và ADMIN không gọi được API quản lý này. Không cho mở sớm trước khi cửa sổ tự động đã đóng hoặc mở tài khoản đang bị khóa.
+
+- `GET /api/v1/registrations/management?weekStart=2026-11-16&q=&page=0&size=20`: danh sách nhân viên mình phụ trách, phân trang ở DB; tìm theo tên/email, escape ký tự `%` và `_`. Không có nhân viên trả 200 với `items: []`. Bỏ weekStart mặc định tuần đang diễn ra theo giờ máy chủ (để xử lý tuần vừa bị khóa), khác mặc định tuần kế tiếp của màn nhân viên.
+- Response: `weekStart`, `weekEnd`, `serverNow`, `opensAt`, `closesAt`, `items`, `page`, `size`, `totalElements`, `totalPages`.
+- Mỗi item gồm `employeeId`, `displayName`, `accountLocked`, `selectionCount`, `state` (OPEN/CLOSED/REOPENED/NOT_OPEN/ACCOUNT_LOCKED), `reopenedAt`, `accessRevision`, `canReopen`, `canClose`.
+- `PUT /api/v1/registrations/management/{employeeId}/access`, body:
+
+```json
+{
+  "weekStart": "2026-11-16",
+  "reopened": true,
+  "accessRevision": "closed"
+}
+```
+
+Dùng accessRevision từ GET gần nhất; giá trị là `closed` hoặc UUID lần mở hiện tại. Đặt reopened=false để khóa lại. Trả item mới; dữ liệu ca đã chọn được giữ nguyên. Mỗi lần mở sau một lần khóa nhận revision mới. Request stale trả 409 `STALE_REGISTRATION_ACCESS`; tải lại rồi quyết định, không tự ghi đè.
+
+Quyền mở lại áp dụng **riêng nhân viên + tuần**, có hiệu lực sau cửa sổ tự động đến khi quản lý khóa lại. Có thể chọn một tuần cũ đã đóng; không tự mở tuần khác. Lưu người mở và thời điểm trong bảng V10 `registration_reopens`; không thay đổi migration đã triển khai. Quyền cũ không được dùng khi nhân viên đang thuộc quản lý khác với người đã mở.
+
+Employee GET/PUT thêm `reopened: boolean`. `editable` true ngoài cửa sổ tự động chỉ khi đúng nhân viên có quyền mở lại của quản lý hiện tại. Khi quản lý khóa lại, request lưu tiếp theo trả 409 `REGISTRATION_CLOSED`. Mở/khóa và lưu đều khóa bản ghi nhân viên trong transaction: thao tác lưu đã lấy khóa trước có thể hoàn tất trước khi khóa lại; sau khi khóa lại hoàn tất không còn lưu được.
+
+Lỗi bổ sung: 403 `REGISTRATION_EMPLOYEE_FORBIDDEN`; 409 `REGISTRATION_NOT_CLOSED`, `REGISTRATION_EMPLOYEE_LOCKED`, `STALE_REGISTRATION_ACCESS`. Tài khoản/phiên bị thu hồi trả 401 qua security chung.
+
+Kiểm thử SYNC-26 bao gồm cách ly theo nhân viên và tuần, phân quyền quản lý, boundary thứ Hai, stale revision, tài khoản khóa/chuyển quản lý, danh sách phân trang, mở lại đồng thời và race khóa/lưu.

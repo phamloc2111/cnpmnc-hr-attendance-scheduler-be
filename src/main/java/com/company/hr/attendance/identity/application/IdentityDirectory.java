@@ -6,6 +6,10 @@ import com.company.hr.attendance.identity.domain.Role;
 import com.company.hr.attendance.identity.infrastructure.AccountRepository;
 import java.util.*;
 import org.springframework.stereotype.Service;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.security.access.AccessDeniedException;
 
@@ -24,6 +28,16 @@ public class IdentityDirectory implements IdentityApi {
     }
     public List<UUID> managedEmployeeIds(UUID managerId) {
         return accounts.findByManagerIdAndRole(managerId, Role.EMPLOYEE).stream().map(Account::getId).toList();
+    }
+    public Page<Person> managedEmployees(UUID managerId, String query, int page, int size) {
+        Specification<Account> filters = (root, ignored, cb) -> cb.and(
+            cb.equal(root.get("managerId"), managerId), cb.equal(root.get("role"), Role.EMPLOYEE));
+        if (query != null && !query.isBlank()) {
+            String search = "%" + query.strip().toLowerCase(Locale.ROOT).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
+            filters = filters.and((root, ignored, cb) -> cb.or(cb.like(cb.lower(root.get("displayName")), search, '\\'), cb.like(cb.lower(root.get("email")), search, '\\')));
+        }
+        return accounts.findAll(filters, PageRequest.of(page, size,
+            Sort.by("displayName", "id"))).map(this::view);
     }
     public Map<UUID, String> names(Collection<UUID> ids) {
         var result = new HashMap<UUID, String>();
