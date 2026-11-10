@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 
-@RestControllerAdvice(assignableTypes = RegistrationController.class)
+@RestControllerAdvice(assignableTypes = {RegistrationController.class, RegistrationManagementController.class})
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class RegistrationExceptionHandler {
     @ExceptionHandler(RegistrationException.class) ResponseEntity<ApiError> operation(RegistrationException error, HttpServletRequest request) {

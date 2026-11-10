@@ -21,9 +21,10 @@ public class RegistrationService {
     private final ShiftCatalogApi catalog;
     private final RegistrationRepository registrations;
     private final Clock clock;
+    private final RegistrationAccessService access;
     public RegistrationService(IdentityApi identity, ShiftCatalogApi catalog, RegistrationRepository registrations,
-                               @Qualifier("registrationClock") Clock clock) {
-        this.identity = identity; this.catalog = catalog; this.registrations = registrations; this.clock = clock;
+                               @Qualifier("registrationClock") Clock clock, RegistrationAccessService access) {
+        this.identity = identity; this.catalog = catalog; this.registrations = registrations; this.clock = clock; this.access = access;
     }
     public Week get(UUID actorId, LocalDate week) {
         authorize(identity.person(actorId)); var now = clock.instant();
@@ -37,8 +38,8 @@ public class RegistrationService {
     @Transactional
     public Week save(UUID actorId, Save request) {
         // Serializes replace operations even when this employee has no registration rows yet.
-        authorize(identity.lockPerson(actorId));
-        var week = monday(request.weekStart()); requireOpen(week);
+        var person = identity.lockPerson(actorId); authorize(person);
+        var week = monday(request.weekStart()); requireOpen(person, week);
         var current = registrations.ids(actorId, week);
         if (!revision(current).equals(request.revision())) throw new RegistrationException(CONFLICT, "STALE_REGISTRATION",
             "Đăng ký đã được thay đổi ở nơi khác. Hãy tải lại trước khi lưu.");
@@ -46,18 +47,20 @@ public class RegistrationService {
         if (ids.size() != request.shiftIds().size()) throw new RegistrationException(BAD_REQUEST, "DUPLICATE_SHIFT", "Mỗi ca chỉ được chọn một lần.");
         if (catalog.find(ids).size() != ids.size()) throw new RegistrationException(BAD_REQUEST, "INVALID_REGISTRATION_SHIFT",
             "Có ca không còn trong danh sách. Hãy tải lại và chọn ca hợp lệ.");
-        requireOpen(week);
+        requireOpen(person, week);
         registrations.replace(actorId, week, ids);
         return view(actorId, week, clock.instant());
     }
     private Week view(UUID employeeId, LocalDate week, Instant now) {
         var ids = registrations.ids(employeeId, week); var window = RegistrationWindow.forWeek(week);
         var selected = catalog.find(ids).stream().sorted(Comparator.comparing(ShiftCatalogApi.Template::name).thenComparing(ShiftCatalogApi.Template::id)).toList();
-        return new Week(week, week.plusDays(6), now, window.opensAt(), window.closesAt(), window.editable(now), revision(ids), selected);
+        boolean reopened = !now.isBefore(window.closesAt()) && access.reopened(identity.person(employeeId), week);
+        return new Week(week, week.plusDays(6), now, window.opensAt(), window.closesAt(), window.editable(now) || reopened, reopened, revision(ids), selected);
     }
-    private void requireOpen(LocalDate week) {
-        if (!RegistrationWindow.forWeek(week).editable(clock.instant())) throw new RegistrationException(CONFLICT, "REGISTRATION_CLOSED",
-            "Cổng đăng ký đã đóng hoặc chưa mở. Chỉ đăng ký ca tuần kế tiếp trong ngày Chủ nhật (giờ Việt Nam).");
+    private void requireOpen(IdentityApi.Person person, LocalDate week) {
+        var now = clock.instant(); var window = RegistrationWindow.forWeek(week);
+        if (!window.editable(now) && (now.isBefore(window.closesAt()) || !access.reopened(person, week))) throw new RegistrationException(CONFLICT, "REGISTRATION_CLOSED",
+            "Cổng đăng ký đã đóng hoặc chưa mở. Chỉ đăng ký trong ngày Chủ nhật hoặc khi quản lý mở lại riêng cho bạn (giờ Việt Nam).");
     }
     private LocalDate monday(LocalDate week) {
         if (week == null || week.getDayOfWeek() != DayOfWeek.MONDAY) throw new RegistrationException(BAD_REQUEST, "INVALID_REGISTRATION_WEEK",

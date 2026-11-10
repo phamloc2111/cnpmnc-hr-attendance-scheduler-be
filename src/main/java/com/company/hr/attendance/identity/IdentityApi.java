@@ -1,6 +1,7 @@
 package com.company.hr.attendance.identity;
 
 import java.util.*;
+import org.springframework.data.domain.Page;
 
 /** Public boundary for modules that need account identity and scheduling authorization. */
 public interface IdentityApi {
@@ -8,5 +9,6 @@ public interface IdentityApi {
     Person person(UUID id);
     Person lockPerson(UUID id);
     List<UUID> managedEmployeeIds(UUID managerId);
+    Page<Person> managedEmployees(UUID managerId, String query, int page, int size);
     Map<UUID, String> names(Collection<UUID> ids);
 }
