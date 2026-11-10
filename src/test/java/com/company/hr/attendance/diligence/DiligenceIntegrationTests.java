@@ -47,7 +47,7 @@ class DiligenceIntegrationTests {
         jdbc.update("DELETE FROM notification_deliveries");jdbc.update("DELETE FROM notification_devices");
         jdbc.update("DELETE FROM shift_registrations");jdbc.update("DELETE FROM registration_reopens");
         jdbc.update("DELETE FROM diligence_review_audit");jdbc.update("DELETE FROM diligence_day_reviews");
-        jdbc.update("DELETE FROM attendance_records");jdbc.update("DELETE FROM attendance_events");jdbc.update("DELETE FROM work_schedules");
+        jdbc.update("DELETE FROM attendance_explanations");jdbc.update("DELETE FROM attendance_records");jdbc.update("DELETE FROM attendance_events");jdbc.update("DELETE FROM work_schedules");
         templates.deleteAll();sessions.deleteAll();jdbc.update("DELETE FROM identity_account_skills");jdbc.update("UPDATE identity_accounts SET manager_id=NULL");accounts.deleteAll();
     }
     Account account(String name,Role role,UUID managerId){
@@ -161,6 +161,60 @@ class DiligenceIntegrationTests {
         mvc.perform(get(url+"/review").header("Authorization","Bearer "+managerToken)).andExpect(status().isOk()).andExpect(jsonPath("$.history.length()").value(1));
         mvc.perform(put(url+"/review").header("Authorization","Bearer "+managerToken).contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(request)))
             .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("DILIGENCE_REVIEW_CHANGED"));
+    }
+    @Test void approvedLateExplanationOnlyRefundsPointsWhenManagerExplicitlyExempts()throws Exception{
+        var first=late(1,10);var second=late(2,10);
+        assertThat(detail(managerToken,employee.getId(),"2026-11").at("/employee/score").asInt()).isEqualTo(90);
+        var firstId=submitExplanation(first,"LATE",null,"Traffic delay with police report");
+        var secondId=submitExplanation(second,"LATE",null,"Heavy rain on commute today");
+        mvc.perform(patch("/api/v1/attendance/explanations/"+firstId+"/decision").header("Authorization","Bearer "+managerToken)
+            .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(Map.of("approved",true,"reason","Manager verified road closure","exemptLatePenalty",true))))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("APPROVED")).andExpect(jsonPath("$.exemptLatePenalty").value(true));
+        mvc.perform(patch("/api/v1/attendance/explanations/"+secondId+"/decision").header("Authorization","Bearer "+managerToken)
+            .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(Map.of("approved",true,"reason","Explanation accepted","exemptLatePenalty",false))))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("APPROVED"));
+        assertThat(detail(managerToken,employee.getId(),"2026-11").at("/employee/score").asInt()).isEqualTo(95);
+        mvc.perform(get("/api/v1/attendance/results").header("Authorization","Bearer "+managerToken).param("from","2026-11-01").param("to","2026-11-07"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.items[0].explanationStatus").value("APPROVED"));
+        mvc.perform(get("/api/v1/attendance/explanations/mine").header("Authorization","Bearer "+employeeToken).param("from","2026-11-01").param("to","2026-11-30"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(2));
+    }
+    @Test void timelyMissingCheckInExplanationChangesAbsenceToWarningAfterApproval()throws Exception{
+        var date=LocalDate.of(2026,11,10);var shift=shift(employee.getId(),date,Instant.parse("2026-11-10T01:00:00Z"));
+        assertThat(detail(managerToken,employee.getId(),"2026-11").at("/employee/score").asInt()).isEqualTo(80);
+        when(clock.instant()).thenReturn(Instant.parse("2026-11-10T12:00:00Z"));
+        var id=submitExplanation(shift,"MISSING_CHECK_IN",null,"Forgot to check in at the start");
+        when(clock.instant()).thenReturn(NOW);
+        mvc.perform(patch("/api/v1/attendance/explanations/"+id+"/decision").header("Authorization","Bearer "+managerToken)
+            .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(Map.of("approved",true,"reason","Manager confirmed the shift","exemptLatePenalty",false))))
+            .andExpect(status().isOk());
+        var result=detail(managerToken,employee.getId(),"2026-11");
+        assertThat(result.at("/employee/score").asInt()).isEqualTo(100);
+        assertThat(result.at("/items/0/components/0/code").asText()).isEqualTo("MISSING_WARNING");
+    }
+    @Test void rejectionNeedsReasonAndOtherManagerCannotDecide()throws Exception{
+        var shift=shift(employee.getId(),LocalDate.of(2026,11,5),Instant.parse("2026-11-05T01:00:00Z"));
+        event(shift,employee.getId(),Instant.parse("2026-11-05T01:00:00Z"),EventType.CHECK_IN);
+        var id=submitExplanation(shift,"MISSING_CHECK_OUT",null,"Forgot to check out after shift");
+        var url="/api/v1/attendance/explanations/"+id+"/decision";
+        var reject=mapper.writeValueAsString(Map.of("approved",false,"reason","No supporting evidence","exemptLatePenalty",false));
+        mvc.perform(patch(url).header("Authorization","Bearer "+otherToken).contentType(MediaType.APPLICATION_JSON).content(reject)).andExpect(status().isNotFound());
+        mvc.perform(patch(url).header("Authorization","Bearer "+managerToken).contentType(MediaType.APPLICATION_JSON)
+            .content(mapper.writeValueAsString(Map.of("approved",false,"reason","","exemptLatePenalty",false))))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("DECISION_REASON_REQUIRED"));
+        mvc.perform(patch(url).header("Authorization","Bearer "+managerToken).contentType(MediaType.APPLICATION_JSON).content(reject))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("REJECTED")).andExpect(jsonPath("$.decisionReason").value("No supporting evidence"));
+        mvc.perform(patch(url).header("Authorization","Bearer "+managerToken).contentType(MediaType.APPLICATION_JSON).content(reject))
+            .andExpect(status().isConflict());
+        mvc.perform(get("/api/v1/attendance/explanations/mine").header("Authorization","Bearer "+employeeToken).param("from","2026-11-01").param("to","2026-11-30"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.items[0].decisionReason").value("No supporting evidence"));
+    }
+    UUID submitExplanation(UUID shift,String category,UUID recordId,String reason)throws Exception{
+        var body=new java.util.HashMap<String,Object>();body.put("scheduleId",shift);body.put("category",category);body.put("attendanceRecordId",recordId);body.put("reason",reason);
+        var result=mvc.perform(post("/api/v1/attendance/explanations").header("Authorization","Bearer "+employeeToken)
+            .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(body)))
+            .andExpect(status().isCreated()).andExpect(jsonPath("$.status").value("PENDING")).andReturn();
+        return UUID.fromString(mapper.readTree(result.getResponse().getContentAsString()).path("id").asText());
     }
     org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder upload(UUID id,String accuracy){
         var now=Instant.now().toString();return multipart("/api/v1/attendance/events")

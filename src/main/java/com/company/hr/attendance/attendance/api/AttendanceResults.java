@@ -10,6 +10,6 @@ public final class AttendanceResults {
     private AttendanceResults() {}
     public record ResultResponse(UUID scheduleId, UUID employeeId, String employeeName, LocalDate workDate,
         String shiftName, Instant startsAt, Instant endsAt, Instant checkInAt, Instant checkOutAt,
-        Arrival arrival, Departure departure, Overall overall, long lateMinutes, long earlyMinutes) {}
+        Arrival arrival, Departure departure, Overall overall, long lateMinutes, long earlyMinutes, String explanationStatus) {}
     public record ResultPage(List<ResultResponse> items, int page, int size, long totalElements, int totalPages) {}
 }

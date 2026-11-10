@@ -8,5 +8,7 @@ public interface AttendanceApi {
     java.util.List<CheckIn> checkIns(java.util.List<UUID> scheduleIds);
     record Event(UUID scheduleId, String type, java.time.Instant receivedAt) {}
     java.util.List<Event> events(java.util.List<UUID> scheduleIds);
+    record ApprovedExplanation(UUID scheduleId,UUID employeeId,java.time.LocalDate workDate,String category,java.time.Instant submittedAt,boolean exemptLatePenalty) {}
+    java.util.List<ApprovedExplanation> approvedExplanations(java.util.List<UUID> scheduleIds);
     boolean hasEvents(UUID scheduleId);
 }
