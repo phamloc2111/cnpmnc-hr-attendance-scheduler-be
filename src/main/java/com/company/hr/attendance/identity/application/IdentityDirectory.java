@@ -17,7 +17,8 @@ import org.springframework.security.access.AccessDeniedException;
 @Transactional(readOnly = true)
 public class IdentityDirectory implements IdentityApi {
     private final AccountRepository accounts;
-    public IdentityDirectory(AccountRepository accounts) { this.accounts = accounts; }
+    private final com.company.hr.attendance.identity.infrastructure.LoginSessionRepository sessions;
+    public IdentityDirectory(AccountRepository accounts, com.company.hr.attendance.identity.infrastructure.LoginSessionRepository sessions) { this.accounts = accounts; this.sessions = sessions; }
 
     public Person person(UUID id) {
         return view(accounts.findById(id).orElseThrow(() -> new AccessDeniedException("Account unavailable")));
@@ -38,6 +39,12 @@ public class IdentityDirectory implements IdentityApi {
         }
         return accounts.findAll(filters, PageRequest.of(page, size,
             Sort.by("displayName", "id"))).map(this::view);
+    }
+    public boolean canReceiveRegistrationReminders(UUID employeeId, UUID sessionId) {
+        // Push consent outlives JWT expiry; explicit logout/revocation removes the session row.
+        var account=accounts.findById(employeeId);var session=sessions.findById(sessionId);
+        return account.isPresent() && !account.get().isLocked() && account.get().getRole()==Role.EMPLOYEE
+            && session.isPresent() && session.get().getAccountId().equals(employeeId);
     }
     public Map<UUID, String> names(Collection<UUID> ids) {
         var result = new HashMap<UUID, String>();

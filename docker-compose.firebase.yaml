@@ -1,0 +1,12 @@
+services:
+  backend:
+    environment:
+      PUSH_ENABLED: "true"
+      FIREBASE_CREDENTIALS_PATH: /run/secrets/firebase-service-account.json
+    volumes:
+      - type: bind
+        source: ${FIREBASE_CREDENTIALS_HOST_PATH:-../secrets/firebase-service-account.json}
+        target: /run/secrets/firebase-service-account.json
+        read_only: true
+        bind:
+          create_host_path: false

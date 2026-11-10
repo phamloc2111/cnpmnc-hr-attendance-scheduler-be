@@ -1,0 +1,37 @@
+name: Wake Render and send registration reminders
+on:
+  schedule:
+    # Saturday 16:55 UTC = Saturday 23:55 Vietnam: warm five minutes before Sunday.
+    - cron: '55 16 * * 6'
+    # Keep Sunday awake every five minutes: Saturday 17:00 UTC through Sunday 16:59 UTC.
+    - cron: '*/5 17-23 * * 6'
+    - cron: '*/5 0-16 * * 0'
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: registration-reminder-wake
+  cancel-in-progress: false
+jobs:
+  wake-and-trigger:
+    if: vars.PUSH_CRON_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Call the authenticated reminder job
+        env:
+          PUSH_CRON_URL: ${{ secrets.PUSH_CRON_URL }}
+          PUSH_CRON_SECRET: ${{ secrets.PUSH_CRON_SECRET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$PUSH_CRON_URL" || ${#PUSH_CRON_SECRET} -lt 32 ]]; then
+            echo 'Configure PUSH_CRON_URL and PUSH_CRON_SECRET in repository Actions secrets.'
+            exit 1
+          fi
+          if [[ "$PUSH_CRON_URL" != https://* ]]; then
+            echo 'PUSH_CRON_URL must use HTTPS.'
+            exit 1
+          fi
+          curl --fail --silent --show-error --connect-timeout 20 --max-time 120 \
+            --retry 3 --retry-delay 10 --retry-all-errors --request POST \
+            --header "X-Reminder-Cron-Key: $PUSH_CRON_SECRET" "$PUSH_CRON_URL"
