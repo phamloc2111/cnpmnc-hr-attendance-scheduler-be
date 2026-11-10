@@ -69,14 +69,33 @@ class PushNotificationIntegrationTests {
         assertThat(count("notification_deliveries")).isEqualTo(2);
         now.set(Instant.parse("2026-11-21T17:00:00Z"));reminders.run();assertThat(count("notification_deliveries")).isEqualTo(4);
     }
-    @Test void nearClosureOnlyEmployeesWithoutASelectedShiftReceiveTheAdditionalReminder()throws Exception{
-        twoDevices();var shift=templates.saveAndFlush(new ShiftTemplate("Ca sáng",LocalTime.of(8,0),LocalTime.of(12,0),0,UUID.randomUUID(),1,null,null,false));
+    @Test void eachSlotRemindsUnregisteredEmployeesOnceAndStopsAfterRegistration()throws Exception{
+        twoDevices();var shift=templates.saveAndFlush(new ShiftTemplate("Morning",LocalTime.of(8,0),LocalTime.of(12,0),0,UUID.randomUUID(),1,null,null,false));
         jdbc.update("INSERT INTO shift_registrations(id,employee_id,week_start,shift_template_id) VALUES (?,?,?,?)",UUID.randomUUID(),aId,WEEK,shift.getId());
-        now.set(Instant.parse("2026-11-15T14:59:59Z"));reminders.run();clearInvocations(gateway);
-        now.set(Instant.parse("2026-11-15T15:00:00Z"));reminders.run();reminders.run();
-        verify(gateway,times(1)).send(eq(bId),eq("fake-token-b"),eq(WEEK),eq("REMINDER"),any(),any());
-        verify(gateway,never()).send(eq(aId),anyString(),any(),eq("REMINDER"),any(),any());
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM notification_deliveries WHERE status='SKIPPED'",Integer.class)).isEqualTo(1);
+        String[] utc={"01:00:00", "08:00:00", "13:00:00"};
+        String[] kinds={"REMINDER_0800", "REMINDER_1500", "REMINDER_2000"};
+        for(int i=0;i<utc.length;i++){
+            now.set(Instant.parse("2026-11-15T"+utc[i]+"Z"));reminders.run();reminders.run();
+            verify(gateway,times(1)).send(eq(bId),eq("fake-token-b"),eq(WEEK),eq(kinds[i]),any(),any());
+            verify(gateway,never()).send(eq(aId),anyString(),any(),eq(kinds[i]),any(),any());
+        }
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM notification_deliveries WHERE status='SKIPPED'",Integer.class)).isEqualTo(3);
+    }
+    @Test void registeringAfterMorningReminderPreventsAfternoonAndEveningNotifications()throws Exception{
+        subscribe(a,"fake-token-a").andExpect(status().isNoContent());
+        now.set(Instant.parse("2026-11-15T01:00:00Z"));reminders.run();
+        var shift=templates.saveAndFlush(new ShiftTemplate("Morning",LocalTime.of(8,0),LocalTime.of(12,0),0,UUID.randomUUID(),1,null,null,false));
+        jdbc.update("INSERT INTO shift_registrations(id,employee_id,week_start,shift_template_id) VALUES (?,?,?,?)",UUID.randomUUID(),aId,WEEK,shift.getId());
+        now.set(Instant.parse("2026-11-15T08:00:00Z"));reminders.run();
+        now.set(Instant.parse("2026-11-15T13:00:00Z"));reminders.run();
+        verify(gateway,times(1)).send(eq(aId),anyString(),any(),anyString(),any(),any());
+    }
+    @Test void wakingAtNewSlotSkipsOlderQueuedRemindersInsteadOfSendingABurst()throws Exception{
+        subscribe(a,"fake-token-a").andExpect(status().isNoContent());
+        repository.enqueue(WEEK,"OPEN",now.get());repository.enqueue(WEEK,"REMINDER_0800",now.get());
+        now.set(Instant.parse("2026-11-15T08:00:00Z"));reminders.run();
+        verify(gateway,times(1)).send(eq(aId),anyString(),eq(WEEK),eq("REMINDER_1500"),any(),any());
+        verify(gateway,times(1)).send(any(),anyString(),any(),anyString(),any(),any());
     }
     @Test void failedDeliveryRetriesWithBackoffAndCannotBeSentAfterMonday()throws Exception{
         subscribe(a,"fake-token-a").andExpect(status().isNoContent());when(gateway.send(any(),anyString(),any(),anyString(),any(),any())).thenReturn(PushGateway.Result.RETRY,PushGateway.Result.SENT);
@@ -110,6 +129,8 @@ class PushNotificationIntegrationTests {
     }
     @Test void roleValidationMissingConfigAndTestPushAreScopedToOwnDevice()throws Exception{
         mvc.perform(get("/api/v1/notifications/config")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/v1/notifications/config").header("Authorization","Bearer "+a)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.reminderTimes[0]").value("08:00")).andExpect(jsonPath("$.reminderTimes[1]").value("15:00")).andExpect(jsonPath("$.reminderTimes[2]").value("20:00"));
         subscribe(manager,"fake-manager-token").andExpect(status().isForbidden());subscribe(a,"").andExpect(status().isBadRequest());
         when(gateway.available()).thenReturn(false);subscribe(a,"fake-token-a").andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.code").value("PUSH_NOT_CONFIGURED"));
         reminders.run();assertThat(count("notification_deliveries")).isZero();when(gateway.available()).thenReturn(true);

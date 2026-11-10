@@ -7,7 +7,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import java.util.UUID;
-import org.springframework.beans.factory.annotation.Value;
+import com.company.hr.attendance.notification.domain.ReminderWindow;
+import java.util.List;
 import org.springframework.http.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -19,14 +20,13 @@ import org.springframework.web.bind.annotation.*;
 @PreAuthorize("hasRole('EMPLOYEE')")
 public class PushController {
     public record Device(@NotBlank @Size(max=4096) @Pattern(regexp="[A-Za-z0-9_:\\-]+") String token) {}
-    public record Config(boolean enabled,String reminderTime,String timezone) {}
+    public record Config(boolean enabled,List<String> reminderTimes,String timezone) {}
     private final PushSubscriptionService service;
     private final PushGateway gateway;
-    private final String reminderTime;
-    public PushController(PushSubscriptionService service,PushGateway gateway,@Value("${app.notifications.reminder-time:22:00}") String reminderTime) {
-        this.service=service;this.gateway=gateway;this.reminderTime=reminderTime;
+    public PushController(PushSubscriptionService service,PushGateway gateway) {
+        this.service=service;this.gateway=gateway;
     }
-    @GetMapping("/config") public ResponseEntity<Config> config() { return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(new Config(gateway.available(),reminderTime,"Asia/Ho_Chi_Minh")); }
+    @GetMapping("/config") public ResponseEntity<Config> config() { return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(new Config(gateway.available(),ReminderWindow.REMINDER_TIMES.stream().map(java.time.LocalTime::toString).toList(),"Asia/Ho_Chi_Minh")); }
     @PutMapping("/devices") public ResponseEntity<Void> subscribe(@AuthenticationPrincipal Jwt jwt,@Valid @RequestBody Device device) {
         service.subscribe(UUID.fromString(jwt.getSubject()),UUID.fromString(jwt.getId()),device.token());return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
     }
