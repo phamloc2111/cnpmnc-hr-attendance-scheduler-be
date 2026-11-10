@@ -38,6 +38,13 @@ public class WorkScheduleDirectory implements WorkScheduleApi {
         if (employeeId != null) filter = filter.and((root, ignored, cb) -> cb.equal(root.get("employeeId"), employeeId));
         return schedules.findAll(filter, PageRequest.of(page, size, Sort.by("workDate", "startsAt", "id"))).map(this::view);
     }
+    @Override
+    public java.util.List<Shift> employeeShifts(java.util.Collection<UUID> employeeIds, LocalDate from, LocalDate to) {
+        if (employeeIds.isEmpty()) return java.util.List.of();
+        Specification<WorkSchedule> filter = (root, ignored, cb) -> cb.and(
+            root.get("employeeId").in(employeeIds), cb.between(root.get("workDate"), from, to));
+        return schedules.findAll(filter, Sort.by("workDate", "startsAt", "id")).stream().map(this::view).toList();
+    }
     private Shift view(WorkSchedule schedule) {
         return new Shift(schedule.getId(), schedule.getEmployeeId(), schedule.getWorkDate(),
             schedule.getShiftName(), schedule.getStartsAt(), schedule.getEndsAt());
