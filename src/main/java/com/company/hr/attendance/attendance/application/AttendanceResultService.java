@@ -4,6 +4,7 @@ import com.company.hr.attendance.attendance.api.AttendanceModels.*;
 import com.company.hr.attendance.attendance.api.AttendanceResults.*;
 import com.company.hr.attendance.attendance.domain.AttendanceClassifier;
 import com.company.hr.attendance.attendance.infrastructure.AttendanceEventRepository;
+import com.company.hr.attendance.attendance.infrastructure.AttendanceExplanationRepository;
 import com.company.hr.attendance.identity.IdentityApi;
 import com.company.hr.attendance.workschedule.WorkScheduleApi;
 import java.time.Instant;
@@ -23,11 +24,12 @@ import org.springframework.transaction.annotation.Transactional;
 public class AttendanceResultService {
     private final WorkScheduleApi schedules;
     private final AttendanceEventRepository events;
+    private final AttendanceExplanationRepository explanations;
     private final IdentityApi identity;
     private final int graceMinutes;
-    public AttendanceResultService(WorkScheduleApi schedules, AttendanceEventRepository events, IdentityApi identity,
+    public AttendanceResultService(WorkScheduleApi schedules, AttendanceEventRepository events, AttendanceExplanationRepository explanations, IdentityApi identity,
                                    @Value("${app.attendance.grace-minutes:5}") int graceMinutes) {
-        this.schedules = schedules; this.events = events; this.identity = identity; this.graceMinutes = graceMinutes;
+        this.schedules = schedules; this.events = events; this.explanations=explanations; this.identity = identity; this.graceMinutes = graceMinutes;
     }
     public ResultPage results(UUID actorId, LocalDate from, LocalDate to, UUID employeeId, int page, int size) {
         if (from == null || to == null || to.isBefore(from) || ChronoUnit.DAYS.between(from, to) > 30)
@@ -37,6 +39,8 @@ public class AttendanceResultService {
         var byShift = events.scheduleEvents(shifts.stream().map(WorkScheduleApi.Shift::id).toList()).stream()
             .collect(Collectors.groupingBy(EventResponse::scheduleId,
                 Collectors.toMap(EventResponse::type, Function.identity())));
+        var reviewed=explanations.forSchedules(shifts.stream().map(WorkScheduleApi.Shift::id).toList()).stream()
+            .collect(Collectors.groupingBy(com.company.hr.attendance.attendance.domain.AttendanceExplanation::scheduleId));
         var now = Instant.now();
         var rows = shifts.stream().map(shift -> {
             Map<EventType, EventResponse> recorded = byShift.getOrDefault(shift.id(), Map.of());
@@ -47,7 +51,10 @@ public class AttendanceResultService {
             var status = AttendanceClassifier.classify(shift.startsAt(), shift.endsAt(), in, out, now, graceMinutes);
             return new ResultResponse(shift.id(), shift.employeeId(), names.getOrDefault(shift.employeeId(), "Nhân viên"),
                 shift.workDate(), shift.name(), shift.startsAt(), shift.endsAt(), in, out,
-                status.arrival(), status.departure(), status.overall(), status.lateMinutes(), status.earlyMinutes());
+                status.arrival(), status.departure(), status.overall(), status.lateMinutes(), status.earlyMinutes(),
+                reviewed.getOrDefault(shift.id(),java.util.List.of()).stream().map(row->row.status().name())
+                    .filter(value->value.equals("APPROVED")).findFirst().orElseGet(()->reviewed.getOrDefault(shift.id(),java.util.List.of()).stream()
+                        .map(row->row.status().name()).findFirst().orElse(null)));
         }).toList();
         return new ResultPage(rows, shifts.getNumber(), shifts.getSize(), shifts.getTotalElements(), shifts.getTotalPages());
     }

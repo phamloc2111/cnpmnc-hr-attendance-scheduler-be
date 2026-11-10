@@ -47,6 +47,9 @@ public class DiligenceService {
             .filter(event->!event.receivedAt().isAfter(now))
             .collect(Collectors.groupingBy(AttendanceApi.Event::scheduleId));
         var reviewMap=reviews.find(employees,from,to);
+        var approved=attendance.approvedExplanations(shifts.stream().map(WorkScheduleApi.Shift::id).toList());
+        var lateExemptions=approved.stream().filter(row->row.category().equals("LATE")&&row.exemptLatePenalty())
+            .map(AttendanceApi.ApprovedExplanation::scheduleId).collect(Collectors.toSet());
         var grouped=shifts.stream().collect(Collectors.groupingBy(WorkScheduleApi.Shift::employeeId));
         var result=new HashMap<UUID,List<DailyDiligence.Result>>();
         for(var employee:employees){
@@ -59,16 +62,27 @@ public class DiligenceService {
                     var checkOut=scheduleEvents.stream().filter(event->event.type().equals("CHECK_OUT")).map(AttendanceApi.Event::receivedAt).min(Comparator.naturalOrder()).orElse(null);
                     return new DailyDiligence.Shift(shift.id(),shift.name(),shift.startsAt(),shift.endsAt(),checkIn,checkOut);
                 }).toList();
-                input.add(new DailyDiligence.Day(day.getKey(),dailyShifts,reviewMap.getOrDefault(new DayReviewRepository.Key(employee,day.getKey()),DayReview.empty(employee,day.getKey()))));
+                var current=reviewMap.getOrDefault(new DayReviewRepository.Key(employee,day.getKey()),DayReview.empty(employee,day.getKey()));
+                if(current.missing()==DayReview.Missing.AUTO){
+                    var submitted=approved.stream().filter(row->row.employeeId().equals(employee)&&row.workDate().equals(day.getKey())
+                        && row.category().startsWith("MISSING_")).map(AttendanceApi.ApprovedExplanation::submittedAt).min(Comparator.naturalOrder());
+                    if(submitted.isPresent()){
+                        var deadline=dailyShifts.stream().map(DailyDiligence.Shift::endsAt).max(Comparator.naturalOrder()).orElseThrow().plus(Duration.ofHours(48));
+                        current=new DayReview(employee,day.getKey(),current.absence(),current.earlyLeaveApproved(),
+                            submitted.get().isAfter(deadline)?DayReview.Missing.LATE_EXPLANATION:DayReview.Missing.TIMELY_EXPLANATION,
+                            current.note(),current.revision(),current.reviewedBy(),current.reviewedAt());
+                    }
+                }
+                input.add(new DailyDiligence.Day(day.getKey(),dailyShifts,current));
             }
-            result.put(employee,DailyDiligence.calculate(input,month,now,policy));
+            result.put(employee,DailyDiligence.calculate(input,month,now,policy,lateExemptions));
         }
         return result;
     }
     private Summary summary(IdentityApi.Person person,List<DailyDiligence.Result> entries){
         long deduction=entries.stream().mapToLong(DailyDiligence.Result::points).sum();int score=policy.score(deduction);
         long checkIns=entries.stream().flatMap(day->day.shifts().stream()).filter(shift->shift.checkInAt()!=null).count();
-        long late=entries.stream().flatMap(day->day.components().stream()).filter(component->component.code().equals("LATE")).count();
+        long late=entries.stream().flatMap(day->day.components().stream()).filter(component->component.code().equals("LATE")||component.code().equals("LATE_EXCUSED")).count();
         return new Summary(person.id(),person.name(),person.locked(),score,deduction,checkIns,late,
             score>=DiligencePolicy.REWARD_THRESHOLD?"ELIGIBLE":"INELIGIBLE",
             entries.stream().filter(DailyDiligence.Result::absent).count(),entries.stream().filter(DailyDiligence.Result::missing).count(),

@@ -14,6 +14,9 @@ public final class DailyDiligence {
         boolean capped,boolean disciplinaryReferral,boolean pendingExplanation,Instant explanationDeadline,
         boolean absent,boolean missing,DayReview review) {}
     public static List<Result> calculate(List<Day> input,YearMonth month,Instant now,DiligencePolicy policy) {
+        return calculate(input,month,now,policy,Set.of());
+    }
+    public static List<Result> calculate(List<Day> input,YearMonth month,Instant now,DiligencePolicy policy,Set<UUID> lateExemptions) {
         var days=input.stream().sorted(Comparator.comparing(Day::date)).toList();
         var result=new ArrayList<Result>();int absentOrdinal=0,missingOrdinal=0,streak=0;LocalDate previousAbsence=null;
         for(var day:days){
@@ -51,7 +54,8 @@ public final class DailyDiligence {
             }
             // A disciplinary referral replaces all point sanctions for that day, while preserving earlier days.
             if(!disciplinary)for(var shift:day.shifts()){
-                if(shift.checkInAt()!=null){int points=policy.penalty(shift.startsAt(),shift.checkInAt());if(points>0)components.add(new Component("LATE",points,shift.id()));}
+                if(shift.checkInAt()!=null){int points=policy.penalty(shift.startsAt(),shift.checkInAt());
+                    if(points>0)components.add(new Component(lateExemptions.contains(shift.id())?"LATE_EXCUSED":"LATE",lateExemptions.contains(shift.id())?0:points,shift.id()));}
                 if(shift.checkOutAt()!=null){
                     var early=Duration.between(shift.checkOutAt(),shift.endsAt());
                     if(early.compareTo(Duration.ofMinutes(policy.graceMinutes()))>0){
