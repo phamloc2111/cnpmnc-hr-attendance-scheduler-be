@@ -12,6 +12,8 @@ spring:
   flyway:
     enabled: true
 app:
+  notifications:
+    enabled: false
   auth:
     jwt-secret: test-only-signing-secret-at-least-32-bytes-long
   bootstrap:

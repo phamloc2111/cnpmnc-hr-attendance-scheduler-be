@@ -39,6 +39,12 @@ management:
         enabled: true
 
 app:
+  notifications:
+    enabled: ${PUSH_ENABLED:false}
+    credentials-path: ${FIREBASE_CREDENTIALS_PATH:}
+    reminder-time: ${PUSH_REMINDER_TIME:22:00}
+    cron-secret: ${PUSH_CRON_SECRET:}
+    poll-delay-ms: ${PUSH_POLL_DELAY_MS:60000}
   maps:
     goong:
       api-key: ${GOONG_API_KEY:}

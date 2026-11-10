@@ -7,3 +7,11 @@ target
 .vscode
 *.iml
 *.log
+
+# Private Firebase credentials
+secrets/
+*-service-account*.json
+
+**/service-account.json
+
+**/*service*account*.json
