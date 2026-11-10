@@ -10,7 +10,6 @@ Dùng Firebase Cloud Messaging HTTP v1 qua Firebase Admin SDK. Không cần Fire
 ```dotenv
 PUSH_ENABLED=true
 FIREBASE_CREDENTIALS_PATH=D:/hr/secrets/firebase-service-account.json
-PUSH_REMINDER_TIME=22:00
 ```
 
 Mặc định PUSH_ENABLED=false: backend vẫn khởi động, API config trả enabled=false và không khởi tạo SDK/gửi push. Khi bật mà thiếu file credentials, backend báo lỗi cấu hình rõ ràng. Service account cần quyền gửi FCM cho cùng project với frontend; kiểm tra Firebase Cloud Messaging API (HTTP v1) đã bật.
@@ -30,7 +29,6 @@ Trong backend service → Environment → Secret Files, tạo `firebase-service-
 ```dotenv
 PUSH_ENABLED=true
 FIREBASE_CREDENTIALS_PATH=/etc/secrets/firebase-service-account.json
-PUSH_REMINDER_TIME=22:00
 ```
 
 Redeploy. Đường dẫn trên Windows và Render khác nhau; không đưa đường dẫn máy local hoặc JSON private vào Git. Render cung cấp secret file ở runtime cho Docker: https://render.com/docs/docker-secrets.
@@ -40,8 +38,9 @@ Redeploy. Đường dẫn trên Windows và Render khác nhau; không đưa đư
 ## Luồng gửi và giới hạn
 
 - Poll mỗi 60 giây (PUSH_POLL_DELAY_MS), theo Asia/Ho_Chi_Minh. Không phụ thuộc giờ hệ điều hành server hay đồng hồ nhân viên.
-- Chủ nhật 00:00 đến trước giờ nhắc: gửi OPEN cho thiết bị nhân viên đã đồng ý nhận push.
-- Mặc định Chủ nhật 22:00 đến hết 23:59: gửi REMINDER nếu tuần kế tiếp chưa có mẫu ca nào được chọn. Lựa chọn rỗng được xem là chưa đăng ký. Người đã chọn ít nhất một ca không nhận lời nhắc này.
+- Chủ nhật 00:00 đến trước 08:00: gửi OPEN cho thiết bị nhân viên đã đồng ý nhận push.
+- Chủ nhật 08:00, 15:00 và 20:00: gửi REMINDER_0800, REMINDER_1500 và REMINDER_2000 tương ứng nếu tuần kế tiếp chưa có mẫu ca nào được chọn. Lựa chọn rỗng được xem là chưa đăng ký. Người đã chọn ít nhất một ca không nhận lời nhắc này.
+- Chỉ gửi bù mốc hiện tại khi backend thức lại; bỏ job của mốc cũ để tránh dồn nhiều thông báo. Nhân viên đăng ký sau 08:00 sẽ không nhận nhắc 15:00/20:00.
 - Mỗi thiết bị/tuần/loại có một delivery unique. PostgreSQL SKIP LOCKED và lease ngăn nhiều instance cùng nhận một job. Retry tối đa 5 lần với backoff; token UNREGISTERED bị xóa. Không ghi token hoặc private key vào log, chỉ ghi mã lỗi FCM.
 - Push là best-effort: mạng/OS/Focus có thể trì hoãn. TTL kết thúc ở thứ Hai 00:00; worker cũng bỏ thông báo hết hạn. Provider có thể đã nhận trước khi ứng dụng crash; retry không đảm bảo exactly-once. Tag ổn định giúp gộp thông báo lặp trên trình duyệt.
 - Tài khoản khóa/sai role hoặc session đã bị thu hồi không được gửi. Consent push có thể tồn tại lâu hơn JWT 8 giờ để nhắc khi app đóng; logout/đổi mật khẩu thu hồi session thì không gửi nữa. Frontend xóa binding trước logout và bỏ thông báo muộn của tài khoản khác.
@@ -50,13 +49,13 @@ Redeploy. Đường dẫn trên Windows và Render khác nhau; không đưa đư
 
 ## API (EMPLOYEE, Bearer JWT)
 
-- `GET /api/v1/notifications/config`: `{enabled, reminderTime, timezone}`.
+- `GET /api/v1/notifications/config`: `{enabled, reminderTimes: ["08:00", "15:00", "20:00"], timezone}`.
 - `PUT /api/v1/notifications/devices`, body `{ "token": "FCM registration token" }`: đăng ký/rebind cho JWT subject + session hiện tại, 204.
 - `DELETE /api/v1/notifications/devices`, cùng body: chỉ xóa token thuộc JWT subject, 204 idempotent; không thể xóa thiết bị người khác.
 - `POST /api/v1/notifications/test`, cùng body: chỉ gửi thử token đã thuộc chính nhân viên, 204 là FCM đã nhận yêu cầu, không đảm bảo thiết bị đã hiển thị.
 - 503 PUSH_NOT_CONFIGURED; 502 PUSH_DELIVERY_FAILED; 409 PUSH_DEVICE_LIMIT; 400 body không hợp lệ; 401/403 theo quyền chung.
 
-Migration mới V12 tạo notification_devices và notification_deliveries. Không thay đổi V10/V11. RegistrationApi/IdentityApi là ranh giới công khai để kiểm tra điều kiện gửi, không truy cập repository module khác.
+Migration V13 bổ sung ba loại lời nhắc, không sửa V12 đã áp dụng. Migration V12 tạo notification_devices và notification_deliveries. Không thay đổi V10/V11. RegistrationApi/IdentityApi là ranh giới công khai để kiểm tra điều kiện gửi, không truy cập repository module khác.
 
 ## Xác minh
 
@@ -77,6 +76,6 @@ Thiết lập sau khi review/deploy:
 3. Trong tab Variables, đặt PUSH_CRON_ENABLED=true khi backend/Firebase đã sẵn sàng. Mặc định không chạy job khi chưa bật biến này.
 4. Workflow schedule chỉ chạy từ default branch (thường main). Hoàn thành PR feat → dev, kiểm tra dev, rồi PR dev → main theo workflow dự án. Khi file đã có trên default branch, có thể chọn Run workflow để thử gọi cron. Ngoài Chủ nhật, trigger không gửi nhắc đăng ký.
 
-Lịch UTC: Saturday 16:55 làm nóng lúc 23:55 thứ Bảy Việt Nam; sau đó mỗi 5 phút trong suốt Chủ nhật Việt Nam. Backend tự polling 60 giây lúc đã thức, gồm nhắc mặc định 22:00. Không phụ thuộc người mở website; các lần gọi có retry cho cold start. GitHub schedules có thể bị trễ/bỏ khi hệ thống bận, không có SLA đúng từng phút: https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule.
+Lịch UTC: Saturday 16:55 làm nóng lúc 23:55 thứ Bảy Việt Nam; sau đó mỗi 5 phút trong suốt Chủ nhật Việt Nam. Backend tự polling 60 giây lúc đã thức, gồm ba mốc nhắc 08:00, 15:00, 20:00. Không phụ thuộc người mở website; các lần gọi có retry cho cold start. GitHub schedules có thể bị trễ/bỏ khi hệ thống bận, không có SLA đúng từng phút: https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule.
 
 Nếu cần kích hoạt trước khi release lên default branch, có thể dùng cron HTTP bên ngoài với cùng POST URL và header khóa. Không mở endpoint thành công khai hoặc đặt khóa trong query string/frontend. Không dùng API này để gửi thử người khác; nút Gửi thử chỉ dành cho chính thiết bị đã bật.

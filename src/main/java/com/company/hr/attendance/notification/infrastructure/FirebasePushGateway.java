@@ -33,7 +33,7 @@ public class FirebasePushGateway implements PushGateway {
         var message = Message.builder().setToken(token)
             .putData("employeeId", employeeId.toString()).putData("expiresAt", expiresAt.toString())
             .putData("title", kind.equals("TEST") ? "Đã bật thông báo đăng ký ca" : kind.equals("OPEN") ? "Đã mở đăng ký ca tuần tới" : "Bạn chưa đăng ký ca tuần tới")
-            .putData("body", kind.equals("TEST") ? "Bạn sẽ nhận lời nhắc đăng ký ca vào Chủ nhật." : kind.equals("OPEN") ? "Chọn ca mong muốn trước 23:59 Chủ nhật (giờ Việt Nam)." : "Cổng đăng ký sắp đóng lúc 23:59. Hãy chọn ca cho tuần tới.")
+            .putData("body", kind.equals("TEST") ? "Bạn sẽ nhận lời nhắc đăng ký ca vào Chủ nhật." : kind.equals("OPEN") ? "Chọn ca mong muốn trước 23:59 Chủ nhật (giờ Việt Nam)." : "Bạn chưa chọn ca tuần tới. Hãy đăng ký trước 23:59 Chủ nhật.")
             .putData("weekStart", week.toString()).putData("tag", "registration-" + kind.toLowerCase() + "-" + week)
             .setWebpushConfig(WebpushConfig.builder().putHeader("TTL", Long.toString(ttl)).putHeader("Urgency", "normal").build()).build();
         try { FirebaseMessaging.getInstance(app).send(message); return Result.SENT; }
