@@ -10,9 +10,11 @@ class DiligencePolicyTests {
         assertThat(policy.penalty(start,start.plusSeconds(300))).isZero();
         assertThat(policy.penalty(start,start.plusSeconds(300).plusNanos(1))).isEqualTo(5);
         assertThat(policy.penalty(start,start.plusSeconds(900).minusNanos(1))).isEqualTo(5);
-        assertThat(policy.penalty(start,start.plusSeconds(900))).isEqualTo(10);
+        assertThat(policy.penalty(start,start.plusSeconds(900))).isEqualTo(5);
+        assertThat(policy.penalty(start,start.plusSeconds(900).plusNanos(1))).isEqualTo(10);
         assertThat(policy.penalty(start,start.plusSeconds(1800).minusNanos(1))).isEqualTo(10);
-        assertThat(policy.penalty(start,start.plusSeconds(1800))).isEqualTo(20);
+        assertThat(policy.penalty(start,start.plusSeconds(1800))).isEqualTo(10);
+        assertThat(policy.penalty(start,start.plusSeconds(1800).plusNanos(1))).isEqualTo(20);
     }
     @Test void scoreClampsAtZeroAndNinetyStillQualifies(){
         assertThat(policy.score(0)).isEqualTo(100);assertThat(policy.score(10)).isEqualTo(90);

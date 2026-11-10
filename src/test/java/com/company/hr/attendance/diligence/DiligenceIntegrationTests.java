@@ -46,6 +46,7 @@ class DiligenceIntegrationTests {
     void clear(){
         jdbc.update("DELETE FROM notification_deliveries");jdbc.update("DELETE FROM notification_devices");
         jdbc.update("DELETE FROM shift_registrations");jdbc.update("DELETE FROM registration_reopens");
+        jdbc.update("DELETE FROM diligence_review_audit");jdbc.update("DELETE FROM diligence_day_reviews");
         jdbc.update("DELETE FROM attendance_records");jdbc.update("DELETE FROM attendance_events");jdbc.update("DELETE FROM work_schedules");
         templates.deleteAll();sessions.deleteAll();jdbc.update("DELETE FROM identity_account_skills");jdbc.update("UPDATE identity_accounts SET manager_id=NULL");accounts.deleteAll();
     }
@@ -67,7 +68,7 @@ class DiligenceIntegrationTests {
     }
     UUID late(int day,int minutes){
         var start=LocalDate.of(2026,11,day).atTime(8,0).atZone(ZoneId.of("Asia/Ho_Chi_Minh")).toInstant();
-        var id=shift(employee.getId(),LocalDate.of(2026,11,day),start);event(id,employee.getId(),start.plusSeconds(minutes*60L),EventType.CHECK_IN);return id;
+        var id=shift(employee.getId(),LocalDate.of(2026,11,day),start);event(id,employee.getId(),start.plusSeconds(minutes*60L),EventType.CHECK_IN);event(id,employee.getId(),start.plusSeconds(8*3600),EventType.CHECK_OUT);return id;
     }
     JsonNode month(String auth,String value)throws Exception{
         return mapper.readTree(mvc.perform(get("/api/v1/diligence").param("month",value).header("Authorization","Bearer "+auth)).andExpect(status().isOk())
@@ -82,7 +83,7 @@ class DiligenceIntegrationTests {
         var id=late(3,35);var second=detail(managerToken,employee.getId(),"2026-11");
         assertThat(second.at("/employee/score").asInt()).isEqualTo(70);assertThat(second.at("/employee/rewardStatus").asText()).isEqualTo("INELIGIBLE");
         assertThat(second.path("finalized").asBoolean()).isTrue();assertThat(second.at("/policy/graceMinutes").asInt()).isEqualTo(5);
-        event(id,employee.getId(),Instant.parse("2026-11-03T03:00:00Z"),EventType.CHECK_OUT);
+
         assertThat(detail(managerToken,employee.getId(),"2026-11").at("/employee/score").asInt()).isEqualTo(70);
         assertThat(detail(managerToken,employee.getId(),"2026-11").at("/employee/checkInCount").asInt()).isEqualTo(3);
         assertThat(second.has("amount")).isFalse();
@@ -123,11 +124,11 @@ class DiligenceIntegrationTests {
     }
     @Test void overnightCheckInBelongsToShiftStartMonthAndOnlyConfirmedCheckInsDeduct()throws Exception{
         var start=Instant.parse("2026-10-31T16:55:00Z");var id=shift(employee.getId(),LocalDate.of(2026,10,31),start);
-        event(id,employee.getId(),start.plusSeconds(600),EventType.CHECK_IN);
+        event(id,employee.getId(),start.plusSeconds(600),EventType.CHECK_IN);event(id,employee.getId(),start.plusSeconds(8*3600),EventType.CHECK_OUT);
         assertThat(detail(managerToken,employee.getId(),"2026-10").at("/employee/score").asInt()).isEqualTo(95);
         assertThat(detail(managerToken,employee.getId(),"2026-11").at("/employee/score").asInt()).isEqualTo(100);
         shift(employee.getId(),LocalDate.of(2026,11,5),Instant.parse("2026-11-05T01:00:00Z"));
-        assertThat(detail(managerToken,employee.getId(),"2026-11").at("/employee/score").asInt()).isEqualTo(100);
+        assertThat(detail(managerToken,employee.getId(),"2026-11").at("/employee/score").asInt()).isEqualTo(80);
     }
     @Test void detailPaginationPreservesTotalScoreAndFloorIsZero()throws Exception{
         for(int day=1;day<=6;day++)late(day,35);
@@ -146,6 +147,20 @@ class DiligenceIntegrationTests {
         assertThat(detail(managerToken,employee.getId(),month).at("/employee/score").asInt()).isEqualTo(95);
         mvc.perform(upload(id,"5").header("Authorization","Bearer "+employeeToken)).andExpect(status().isConflict());
         assertThat(detail(managerToken,employee.getId(),month).at("/employee/checkInCount").asInt()).isEqualTo(1);
+    }
+    @Test void managerReviewRecalculatesScoreKeepsAuditAndRejectsStaleOrOutOfScopeChanges()throws Exception{
+        var date=LocalDate.of(2026,11,8);shift(employee.getId(),date,Instant.parse("2026-11-08T01:00:00Z"));
+        assertThat(detail(managerToken,employee.getId(),"2026-11").at("/employee/score").asInt()).isEqualTo(80);
+        String url="/api/v1/diligence/employees/"+employee.getId()+"/days/"+date;
+        var request=Map.of("absence","APPROVED_LEAVE","earlyLeaveApproved",false,"missing","AUTO","note","Approved annual leave document","revision",0);
+        mvc.perform(put(url+"/review").header("Authorization","Bearer "+otherToken).contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(request))).andExpect(status().isForbidden());
+        mvc.perform(put(url+"/review").header("Authorization","Bearer "+employeeToken).contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(request))).andExpect(status().isForbidden());
+        mvc.perform(put(url+"/review").header("Authorization","Bearer "+managerToken).contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(request)))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.revision").value(1));
+        assertThat(detail(managerToken,employee.getId(),"2026-11").at("/employee/score").asInt()).isEqualTo(100);
+        mvc.perform(get(url+"/review").header("Authorization","Bearer "+managerToken)).andExpect(status().isOk()).andExpect(jsonPath("$.history.length()").value(1));
+        mvc.perform(put(url+"/review").header("Authorization","Bearer "+managerToken).contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(request)))
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("DILIGENCE_REVIEW_CHANGED"));
     }
     org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder upload(UUID id,String accuracy){
         var now=Instant.now().toString();return multipart("/api/v1/attendance/events")
