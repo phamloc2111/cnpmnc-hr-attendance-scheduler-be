@@ -10,6 +10,8 @@ import jakarta.validation.constraints.*;
 import java.net.URI;
 import java.time.LocalDate;
 import java.util.UUID;
+import java.util.List;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.*;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -28,6 +30,19 @@ public class AttendanceExplanationController {
     public ResponseEntity<ExplanationResponse> submit(@AuthenticationPrincipal Jwt jwt,@Valid @RequestBody SubmitRequest body){
         var result=service.submit(actor(jwt),body);
         return ResponseEntity.created(URI.create("/api/v1/attendance/explanations/"+result.id())).cacheControl(CacheControl.noStore()).body(result);
+    }
+    @PostMapping(consumes=MediaType.MULTIPART_FORM_DATA_VALUE) @PreAuthorize("hasRole('EMPLOYEE')")
+    public ResponseEntity<ExplanationResponse> submitWithImages(@AuthenticationPrincipal Jwt jwt,
+        @RequestParam UUID scheduleId,@RequestParam com.company.hr.attendance.attendance.domain.AttendanceExplanation.Category category,
+        @RequestParam(required=false) UUID attendanceRecordId,@RequestParam String reason,
+        @RequestPart(value="images",required=false) List<MultipartFile> images){
+        var result=service.submit(actor(jwt),new SubmitRequest(scheduleId,category,attendanceRecordId,reason),images);
+        return ResponseEntity.created(URI.create("/api/v1/attendance/explanations/"+result.id())).cacheControl(CacheControl.noStore()).body(result);
+    }
+    @GetMapping("/{id}/images/{imageId}") @PreAuthorize("hasAnyRole('EMPLOYEE','MANAGER','ADMIN')")
+    public ResponseEntity<byte[]> image(@AuthenticationPrincipal Jwt jwt,@PathVariable UUID id,@PathVariable UUID imageId){
+        var photo=service.photo(actor(jwt),id,imageId);
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).contentType(MediaType.parseMediaType(photo.contentType())).body(photo.bytes());
     }
     @GetMapping("/candidates") @PreAuthorize("hasRole('EMPLOYEE')")
     public ResponseEntity<Page<Candidate>> candidates(@AuthenticationPrincipal Jwt jwt,

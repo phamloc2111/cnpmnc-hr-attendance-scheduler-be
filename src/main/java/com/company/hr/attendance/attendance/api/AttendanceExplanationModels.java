@@ -10,10 +10,11 @@ public final class AttendanceExplanationModels {
     public record SubmitRequest(@NotNull UUID scheduleId, @NotNull AttendanceExplanation.Category category,
         UUID attendanceRecordId, @NotBlank @Size(min=10,max=2000) String reason) {}
     public record DecisionRequest(boolean approved, @Size(max=2000) String reason, boolean exemptLatePenalty) {}
+    public record ImageInfo(UUID id,String url,String contentType,int sizeBytes) {}
     public record ExplanationResponse(UUID id,UUID scheduleId,UUID employeeId,String employeeName,LocalDate workDate,
         AttendanceExplanation.Category category,UUID attendanceRecordId,String reason,Instant submittedAt,
-        AttendanceExplanation.Status status,String decisionReason,boolean exemptLatePenalty,UUID decidedBy,Instant decidedAt) {
-        public static ExplanationResponse from(AttendanceExplanation row,String name){return new ExplanationResponse(row.id(),row.scheduleId(),row.employeeId(),name,row.workDate(),row.category(),row.attendanceRecordId(),row.reason(),row.submittedAt(),row.status(),row.decisionReason(),row.exemptLatePenalty(),row.decidedBy(),row.decidedAt());}
+        AttendanceExplanation.Status status,String decisionReason,boolean exemptLatePenalty,UUID decidedBy,Instant decidedAt,List<ImageInfo> images) {
+        public static ExplanationResponse from(AttendanceExplanation row,String name,List<ImageInfo> images){return new ExplanationResponse(row.id(),row.scheduleId(),row.employeeId(),name,row.workDate(),row.category(),row.attendanceRecordId(),row.reason(),row.submittedAt(),row.status(),row.decisionReason(),row.exemptLatePenalty(),row.decidedBy(),row.decidedAt(),images);}
     }
     public record Candidate(UUID scheduleId,LocalDate workDate,String shiftName,Instant startsAt,Instant endsAt,
         AttendanceExplanation.Category category,UUID attendanceRecordId,ExplanationResponse explanation) {}
