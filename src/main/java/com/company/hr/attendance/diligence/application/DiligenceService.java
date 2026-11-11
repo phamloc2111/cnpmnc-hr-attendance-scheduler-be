@@ -61,6 +61,37 @@ public class DiligenceService implements DiligenceApi {
         long offset=(long)page*size;var items=entries.stream().skip(offset).limit(size).toList();
         return new EmployeeMonth(month.toString(),ZONE.getId(),finalized(month,now),now,policyView(),summary(person,entries),items,page,size,entries.size(),(entries.size()+size-1)/size);
     }
+    public OwnPeriod ownMonth(UUID actorId,String requestedMonth) {
+        ownEmployee(actorId);
+        var now=clock.instant();var month=month(requestedMonth,now);
+        var days=entries(List.of(actorId),month,now).getOrDefault(actorId,List.of());
+        return ownPeriod("MONTH",month.atDay(1),month.atEndOfMonth(),now,finalized(month,now),days);
+    }
+    public OwnPeriod ownWeek(UUID actorId,LocalDate selectedDate) {
+        ownEmployee(actorId);
+        var now=clock.instant();var today=now.atZone(ZONE).toLocalDate();
+        if(selectedDate==null||selectedDate.isBefore(LocalDate.of(1900,1,1))||selectedDate.isAfter(today))
+            throw new DiligenceException(HttpStatus.BAD_REQUEST,"INVALID_DILIGENCE_WEEK","Chọn ngày trong tuần hợp lệ, không ở tương lai.");
+        var from=selectedDate.with(java.time.temporal.TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+        var to=from.plusDays(6);
+        var months=new LinkedHashSet<YearMonth>();months.add(YearMonth.from(from));months.add(YearMonth.from(to));
+        var days=new ArrayList<DailyDiligence.Result>();
+        for(var month:months)days.addAll(entries(List.of(actorId),month,now).getOrDefault(actorId,List.of()).stream()
+            .filter(day->!day.workDate().isBefore(from)&&!day.workDate().isAfter(to)).toList());
+        return ownPeriod("WEEK",from,to,now,to.isBefore(today),days);
+    }
+    private void ownEmployee(UUID actorId) {
+        var actor=identity.person(actorId);
+        if(actor.locked()||!actor.role().equals("EMPLOYEE"))throw new AccessDeniedException("Employee access required");
+    }
+    private OwnPeriod ownPeriod(String type,LocalDate from,LocalDate to,Instant now,boolean finalized,List<DailyDiligence.Result> entries) {
+        var days=entries.stream().sorted(Comparator.comparing(DailyDiligence.Result::workDate)).map(day->new OwnDay(
+            day.workDate(),day.shifts().stream().mapToLong(DailyDiligence.Shift::workedMinutes).sum(),day.points(),
+            day.rawPoints(),day.capped(),day.pendingExplanation(),day.disciplinaryReferral(),day.components())).toList();
+        long deducted=days.stream().mapToLong(OwnDay::deductedPoints).sum();
+        long worked=days.stream().mapToLong(OwnDay::workedMinutes).sum();
+        return new OwnPeriod(type,from,to,ZONE.getId(),now,finalized,policy.score(deducted),deducted,worked,days);
+    }
     private Map<UUID,List<DailyDiligence.Result>> entries(List<UUID> employees,YearMonth month,Instant now){
         if(employees.isEmpty())return Map.of();
         var from=month.atDay(1).minusDays(2);var to=month.atEndOfMonth();
@@ -82,7 +113,7 @@ public class DiligenceService implements DiligenceApi {
                     var scheduleEvents=events.getOrDefault(shift.id(),List.of());
                     var checkIn=scheduleEvents.stream().filter(event->event.type().equals("CHECK_IN")).map(AttendanceApi.Event::receivedAt).min(Comparator.naturalOrder()).orElse(null);
                     var checkOut=scheduleEvents.stream().filter(event->event.type().equals("CHECK_OUT")).map(AttendanceApi.Event::receivedAt).min(Comparator.naturalOrder()).orElse(null);
-                    return new DailyDiligence.Shift(shift.id(),shift.name(),shift.startsAt(),shift.endsAt(),checkIn,checkOut);
+                    return new DailyDiligence.Shift(shift.id(),shift.name(),shift.startsAt(),shift.endsAt(),checkIn,checkOut,shift.breakMinutes());
                 }).toList();
                 var current=reviewMap.getOrDefault(new DayReviewRepository.Key(employee,day.getKey()),DayReview.empty(employee,day.getKey()));
                 if(current.missing()==DayReview.Missing.AUTO){
