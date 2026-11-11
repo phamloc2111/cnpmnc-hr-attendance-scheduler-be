@@ -53,6 +53,7 @@ public class Account {
     }
 
     public UUID getId() { return id; }
+    public Instant getCreatedAt() { return createdAt; }
     public String getEmail() { return email; }
     public String getPasswordHash() { return passwordHash; }
     public String getDisplayName() { return displayName; }

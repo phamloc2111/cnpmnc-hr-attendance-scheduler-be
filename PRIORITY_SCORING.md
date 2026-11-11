@@ -1,0 +1,9 @@
+# Weekly priority scores (SYNC-31)
+
+Managers configure five weights for their own teams; administrators can select any manager's team. The weights must each be between 0 and 100 and sum to 100. Defaults are punctuality 35%, prior-week hour balance 25%, tenure 15%, position match 15%, and manager rating 10%. Managers and administrators rate each team member from 1 to 5; an unrated employee receives a neutral 3. The current weights and ratings apply when a score is requested.
+
+The requested week begins Monday in `Asia/Ho_Chi_Minh`. Punctuality is the on-time share of completed shifts in the four preceding weeks, with a five-minute grace period and approved leave removed from the denominator. No completed shift yields a neutral 50. Hour balance rewards employees with fewer assigned minutes in the previous week relative to the team's minimum and maximum; equal workloads give everyone 100. Tenure reaches 100 after 24 months. A selected shift position gives 100 for an exact account position match, 75 for a matching skill name, and 0 otherwise; no position selection yields a neutral 50. Manager ratings map 1–5 to 20–100.
+
+Each unexcused absence in the four preceding weeks subtracts 5 points from the weekly weighted score, capped at 20 points per week. Scores are clamped to 0–100. Ranking breaks equal scores by fewer assigned minutes in the requested week, then employee name. This score is advisory for scheduling; it does not assign shifts automatically.
+
+Endpoints: `GET /api/v1/priority-scores`, `GET /api/v1/priority-scores/me`, `GET|PUT /api/v1/priority-scores/weights`, `GET /api/v1/priority-scores/ratings`, `PUT /api/v1/priority-scores/ratings/{employeeId}`. Manager requests are scoped to their own team; administrators pass `managerId`; employees receive only their own score. All reads use `Cache-Control: no-store`.

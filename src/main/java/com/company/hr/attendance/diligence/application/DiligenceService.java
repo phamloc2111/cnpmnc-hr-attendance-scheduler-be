@@ -2,6 +2,7 @@ package com.company.hr.attendance.diligence.application;
 
 import com.company.hr.attendance.attendance.AttendanceApi;
 import com.company.hr.attendance.diligence.api.DiligenceModels.*;
+import com.company.hr.attendance.diligence.DiligenceApi;
 import com.company.hr.attendance.diligence.domain.*;
 import com.company.hr.attendance.diligence.infrastructure.DayReviewRepository;
 import com.company.hr.attendance.identity.IdentityApi;
@@ -18,13 +19,34 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @Transactional(readOnly=true,isolation=org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
-public class DiligenceService {
+public class DiligenceService implements DiligenceApi {
     private static final ZoneId ZONE=ZoneId.of("Asia/Ho_Chi_Minh");
     private final IdentityApi identity;private final WorkScheduleApi schedules;private final AttendanceApi attendance;
     private final DayReviewRepository reviews;private final Clock clock;private final DiligencePolicy policy;
     public DiligenceService(IdentityApi identity,WorkScheduleApi schedules,AttendanceApi attendance,DayReviewRepository reviews,
         @Qualifier("diligenceClock") Clock clock,@Value("${app.attendance.grace-minutes:5}") int graceMinutes){
         this.identity=identity;this.schedules=schedules;this.attendance=attendance;this.reviews=reviews;this.clock=clock;this.policy=new DiligencePolicy(graceMinutes);
+    }
+    @Override public List<DiligenceApi.Signal> signals(Collection<UUID> employeeIds, LocalDate from, LocalDate to) {
+        if (employeeIds.isEmpty() || from.isAfter(to)) return List.of();
+        var now = clock.instant();
+        var result = new ArrayList<DiligenceApi.Signal>();
+        var ids = List.copyOf(employeeIds);
+        for (var month = YearMonth.from(from); !month.isAfter(YearMonth.from(to)); month = month.plusMonths(1)) {
+            var monthly = entries(ids, month, now);
+            for (var employeeId : ids) for (var day : monthly.getOrDefault(employeeId, List.of())) {
+                if (day.workDate().isBefore(from) || day.workDate().isAfter(to)) continue;
+                int eligible = 0, onTime = 0;
+                for (var shift : day.shifts()) {
+                    if (now.isBefore(shift.endsAt())) continue;
+                    if (day.review().absence() == DayReview.Absence.APPROVED_LEAVE && shift.checkInAt() == null) continue;
+                    eligible++;
+                    if (shift.checkInAt() != null && !shift.checkInAt().isAfter(shift.startsAt().plus(Duration.ofMinutes(policy.graceMinutes())))) onTime++;
+                }
+                result.add(new DiligenceApi.Signal(employeeId, day.workDate(), day.absent(), eligible, onTime));
+            }
+        }
+        return List.copyOf(result);
     }
     public MonthPage month(UUID actorId,String requestedMonth,String query,int page,int size){
         var now=clock.instant();var month=month(requestedMonth,now);var people=identity.employeePage(actorId,query,page,size);

@@ -20,6 +20,13 @@ public class IdentityDirectory implements IdentityApi {
     private final com.company.hr.attendance.identity.infrastructure.LoginSessionRepository sessions;
     public IdentityDirectory(AccountRepository accounts, com.company.hr.attendance.identity.infrastructure.LoginSessionRepository sessions) { this.accounts = accounts; this.sessions = sessions; }
 
+    public Map<UUID, ScoreProfile> scoreProfiles(Collection<UUID> ids) {
+        var profiles = new HashMap<UUID, ScoreProfile>();
+        accounts.findAllById(ids).forEach(account -> profiles.put(account.getId(),
+            new ScoreProfile(account.getId(), account.getDisplayName(), account.isLocked(), account.getManagerId(),
+                account.getCreatedAt(), account.getPositionId(), List.copyOf(account.getSkills()))));
+        return profiles;
+    }
     public Person person(UUID id) {
         return view(accounts.findById(id).orElseThrow(() -> new AccessDeniedException("Account unavailable")));
     }
