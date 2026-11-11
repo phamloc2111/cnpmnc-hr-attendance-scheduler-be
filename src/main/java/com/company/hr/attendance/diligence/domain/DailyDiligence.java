@@ -7,7 +7,15 @@ import static com.company.hr.attendance.diligence.domain.DayReview.*;
 /** Pure chronological scoring, including context before the requested month for absence streaks. */
 public final class DailyDiligence {
     private DailyDiligence() {}
-    public record Shift(UUID id, String name, Instant startsAt, Instant endsAt, Instant checkInAt, Instant checkOutAt) {}
+    public record Shift(UUID id, String name, Instant startsAt, Instant endsAt, Instant checkInAt, Instant checkOutAt, int breakMinutes) {
+        public Shift(UUID id, String name, Instant startsAt, Instant endsAt, Instant checkInAt, Instant checkOutAt) {
+            this(id,name,startsAt,endsAt,checkInAt,checkOutAt,0);
+        }
+        public long workedMinutes() {
+            if(checkInAt==null || checkOutAt==null) return 0;
+            return Math.max(0,Duration.between(checkInAt,checkOutAt).toMinutes()-breakMinutes);
+        }
+    }
     public record Day(LocalDate date,List<Shift> shifts,DayReview review) {}
     public record Component(String code,int points,UUID scheduleId) {}
     public record Result(LocalDate workDate,List<Shift> shifts,List<Component> components,int rawPoints,int points,

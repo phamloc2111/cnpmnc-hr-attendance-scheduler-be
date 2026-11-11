@@ -252,6 +252,43 @@ class DiligenceIntegrationTests {
             .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_EXPLANATION_IMAGE"));
         assertThat(jdbc.queryForObject("SELECT count(*) FROM attendance_explanations",Integer.class)).isZero();
     }
+    @Test void employeeSeesOwnMonthlyAndWeeklyWorkMinutesAndDeductions()throws Exception{
+        var id=late(2,10);
+        jdbc.update("UPDATE work_schedules SET break_minutes=60 WHERE id=?",id);
+        var month=mvc.perform(get("/api/v1/diligence/me").param("month","2026-11")
+            .header("Authorization","Bearer "+employeeToken)).andExpect(status().isOk())
+            .andExpect(header().string("Cache-Control","no-store"))
+            .andExpect(jsonPath("$.score").value(95)).andExpect(jsonPath("$.workedMinutes").value(410))
+            .andExpect(jsonPath("$.days[0].components[0].code").value("LATE"))
+            .andExpect(jsonPath("$.days[0].deductedPoints").value(5)).andReturn();
+        assertThat(mapper.readTree(month.getResponse().getContentAsString()).path("days").size()).isEqualTo(1);
+        mvc.perform(get("/api/v1/diligence/me/week").param("date","2026-11-03")
+            .header("Authorization","Bearer "+employeeToken)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.from").value("2026-11-02"))
+            .andExpect(jsonPath("$.to").value("2026-11-08"))
+            .andExpect(jsonPath("$.workedMinutes").value(410));
+        mvc.perform(get("/api/v1/diligence/me").param("month","2026-11")
+            .header("Authorization","Bearer "+login(outside))).andExpect(status().isOk())
+            .andExpect(jsonPath("$.days.length()").value(0));
+        mvc.perform(get("/api/v1/diligence/me").header("Authorization","Bearer "+managerToken))
+            .andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/diligence/me/week").param("date","2027-01-01")
+            .header("Authorization","Bearer "+employeeToken)).andExpect(status().isBadRequest());
+    }
+    @Test void employeeWeekIncludesDaysAcrossMonthBoundary()throws Exception{
+        for(var date:List.of(LocalDate.of(2026,10,31),LocalDate.of(2026,11,1))){
+            var start=date.atTime(8,0).atZone(ZoneId.of("Asia/Ho_Chi_Minh")).toInstant();
+            var id=shift(employee.getId(),date,start);
+            event(id,employee.getId(),start,EventType.CHECK_IN);
+            event(id,employee.getId(),start.plus(Duration.ofHours(8)),EventType.CHECK_OUT);
+        }
+        mvc.perform(get("/api/v1/diligence/me/week").param("date","2026-11-01")
+            .header("Authorization","Bearer "+employeeToken)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.from").value("2026-10-26"))
+            .andExpect(jsonPath("$.to").value("2026-11-01"))
+            .andExpect(jsonPath("$.days.length()").value(2))
+            .andExpect(jsonPath("$.workedMinutes").value(960));
+    }
     UUID submitExplanation(UUID shift,String category,UUID recordId,String reason)throws Exception{
         var body=new java.util.HashMap<String,Object>();body.put("scheduleId",shift);body.put("category",category);body.put("attendanceRecordId",recordId);body.put("reason",reason);
         var result=mvc.perform(post("/api/v1/attendance/explanations").header("Authorization","Bearer "+employeeToken)

@@ -8,7 +8,11 @@ import org.springframework.data.domain.Page;
 
 /** Schedule data exposed to attendance without sharing persistence entities. */
 public interface WorkScheduleApi {
-    record Shift(UUID id, UUID employeeId, LocalDate workDate, String name, Instant startsAt, Instant endsAt) {}
+    record Shift(UUID id, UUID employeeId, LocalDate workDate, String name, Instant startsAt, Instant endsAt, int breakMinutes) {
+        public Shift(UUID id, UUID employeeId, LocalDate workDate, String name, Instant startsAt, Instant endsAt) {
+            this(id,employeeId,workDate,name,startsAt,endsAt,0);
+        }
+    }
     java.util.List<Shift> employeeShifts(java.util.Collection<UUID> employeeIds, LocalDate from, LocalDate to);
     Optional<Shift> lock(UUID id);
     Page<Shift> pageForManager(UUID actorId, LocalDate from, LocalDate to, UUID employeeId, int page, int size);

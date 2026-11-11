@@ -47,6 +47,6 @@ public class WorkScheduleDirectory implements WorkScheduleApi {
     }
     private Shift view(WorkSchedule schedule) {
         return new Shift(schedule.getId(), schedule.getEmployeeId(), schedule.getWorkDate(),
-            schedule.getShiftName(), schedule.getStartsAt(), schedule.getEndsAt());
+            schedule.getShiftName(), schedule.getStartsAt(), schedule.getEndsAt(), schedule.getBreakMinutes());
     }
 }
