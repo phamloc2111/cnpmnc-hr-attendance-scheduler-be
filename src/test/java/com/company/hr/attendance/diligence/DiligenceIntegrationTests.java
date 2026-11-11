@@ -209,6 +209,49 @@ class DiligenceIntegrationTests {
         mvc.perform(get("/api/v1/attendance/explanations/mine").header("Authorization","Bearer "+employeeToken).param("from","2026-11-01").param("to","2026-11-30"))
             .andExpect(status().isOk()).andExpect(jsonPath("$.items[0].decisionReason").value("No supporting evidence"));
     }
+    @Test void explanationImagesAreLimitedToThreeAndVisibleOnlyToAuthorizedPeople()throws Exception{
+        var shift=late(1,10);
+        var image=new byte[]{(byte)0xff,(byte)0xd8,(byte)0xff,1};
+        var request=multipart("/api/v1/attendance/explanations")
+            .file(new MockMultipartFile("images","one.jpg","image/jpeg",image))
+            .file(new MockMultipartFile("images","two.jpg","image/jpeg",image))
+            .file(new MockMultipartFile("images","three.jpg","image/jpeg",image))
+            .param("scheduleId",shift.toString()).param("category","LATE").param("reason","Road closure caused my delay")
+            .header("Authorization","Bearer "+employeeToken);
+        var created=mvc.perform(request).andExpect(status().isCreated()).andExpect(jsonPath("$.images.length()").value(3)).andReturn();
+        var body=mapper.readTree(created.getResponse().getContentAsString());
+        var imageUrl=body.path("images").get(0).path("url").asText();
+        mvc.perform(get(imageUrl).header("Authorization","Bearer "+employeeToken)).andExpect(status().isOk())
+            .andExpect(header().string("Cache-Control",org.hamcrest.Matchers.containsString("no-store")))
+            .andExpect(content().contentType(MediaType.IMAGE_JPEG)).andExpect(content().bytes(image));
+        mvc.perform(get(imageUrl).header("Authorization","Bearer "+managerToken)).andExpect(status().isOk());
+        mvc.perform(get(imageUrl).header("Authorization","Bearer "+adminToken)).andExpect(status().isOk());
+        mvc.perform(get(imageUrl).header("Authorization","Bearer "+otherToken)).andExpect(status().isNotFound());
+        mvc.perform(get(imageUrl).header("Authorization","Bearer "+login(outside))).andExpect(status().isNotFound());
+        mvc.perform(get("/api/v1/attendance/explanations").header("Authorization","Bearer "+managerToken)
+            .param("from","2026-11-01").param("to","2026-11-30"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.items[0].images.length()").value(3));
+        mvc.perform(get("/api/v1/attendance/explanations/mine").header("Authorization","Bearer "+employeeToken)
+            .param("from","2026-11-01").param("to","2026-11-30"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.items[0].images.length()").value(3));
+    }
+    @Test void explanationImagesRejectExcessAndInvalidFilesWithoutSaving()throws Exception{
+        var shift=late(1,10);var image=new byte[]{(byte)0xff,(byte)0xd8,(byte)0xff,1};
+        var excess=multipart("/api/v1/attendance/explanations")
+            .file(new MockMultipartFile("images","1.jpg","image/jpeg",image))
+            .file(new MockMultipartFile("images","2.jpg","image/jpeg",image))
+            .file(new MockMultipartFile("images","3.jpg","image/jpeg",image))
+            .file(new MockMultipartFile("images","4.jpg","image/jpeg",image))
+            .param("scheduleId",shift.toString()).param("category","LATE").param("reason","Road closure caused my delay")
+            .header("Authorization","Bearer "+employeeToken);
+        mvc.perform(excess).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("TOO_MANY_EXPLANATION_IMAGES"));
+        mvc.perform(multipart("/api/v1/attendance/explanations")
+            .file(new MockMultipartFile("images","fake.jpg","image/jpeg",new byte[]{1,2,3}))
+            .param("scheduleId",shift.toString()).param("category","LATE").param("reason","Road closure caused my delay")
+            .header("Authorization","Bearer "+employeeToken))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_EXPLANATION_IMAGE"));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM attendance_explanations",Integer.class)).isZero();
+    }
     UUID submitExplanation(UUID shift,String category,UUID recordId,String reason)throws Exception{
         var body=new java.util.HashMap<String,Object>();body.put("scheduleId",shift);body.put("category",category);body.put("attendanceRecordId",recordId);body.put("reason",reason);
         var result=mvc.perform(post("/api/v1/attendance/explanations").header("Authorization","Bearer "+employeeToken)
