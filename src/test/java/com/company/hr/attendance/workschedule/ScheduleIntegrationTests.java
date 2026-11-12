@@ -64,10 +64,24 @@ class ScheduleIntegrationTests {
         assign(managerToken, employee, template, "2026-11-09").andExpect(status().isCreated())
             .andExpect(jsonPath("$.requiredPosition").value("Thu ngân"));
         assign(adminToken, outsider, template, "2026-11-09").andExpect(status().isCreated());
+
+        // Lịch chưa công bố -> nhân viên chưa thấy
+        mvc.perform(get("/api/v1/work-schedules").header("Authorization", "Bearer " + employeeToken)
+            .param("from", "2026-11-08").param("to", "2026-11-09"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(0));
+
+        // Quản lý công bố lịch tuần
+        mvc.perform(post("/api/v1/work-schedules/publish").header("Authorization", "Bearer " + managerToken)
+            .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(Map.of(
+                "from", "2026-11-08", "to", "2026-11-09", "confirmOvertime", true))))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.publishedCount").value(1));
+
+        // Sau khi công bố -> nhân viên thấy lịch của mình kèm vị trí
         mvc.perform(get("/api/v1/work-schedules").header("Authorization", "Bearer " + employeeToken)
             .param("from", "2026-11-08").param("to", "2026-11-09"))
             .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
             .andExpect(jsonPath("$.items[0].requiredPosition").value("Thu ngân"))
+            .andExpect(jsonPath("$.items[0].published").value(true))
             .andExpect(jsonPath("$.items[0].startsAt").value("2026-11-09T00:00:00Z"));
     }
 
@@ -75,9 +89,59 @@ class ScheduleIntegrationTests {
         var template = shift("07:00", "11:00", 0);
         jdbc.update("update work_shift_templates set required_position=null where id=?", UUID.fromString(template.get("id").asText()));
         assign(managerToken, employee, template, "2026-11-09").andExpect(status().isCreated());
+        mvc.perform(post("/api/v1/work-schedules/publish").header("Authorization", "Bearer " + managerToken)
+            .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(Map.of(
+                "from", "2026-11-08", "to", "2026-11-09", "confirmOvertime", true))))
+            .andExpect(status().isOk());
         mvc.perform(get("/api/v1/work-schedules").header("Authorization", "Bearer " + employeeToken)
             .param("from", "2026-11-09").param("to", "2026-11-09"))
             .andExpect(status().isOk()).andExpect(jsonPath("$.items[0].requiredPosition").isEmpty());
+    }
+
+    @Test void reassign_dragAndDrop_enforcesHardConstraintsAndUpdatesShift() throws Exception {
+        var day = shift("08:00", "12:00", 0);
+        var afternoon = shift("13:00", "17:00", 0);
+        var assigned = json(assign(managerToken, employee, day, "2026-11-05").andExpect(status().isCreated()));
+        var scheduleId = UUID.fromString(assigned.get("id").asText());
+
+        // Nhân viên đã có ca chiều ngày 2026-11-05
+        assign(managerToken, employee, afternoon, "2026-11-05").andExpect(status().isCreated());
+
+        // Kéo thả đổi sang ngày khác (2026-11-06) thành công
+        mvc.perform(put("/api/v1/work-schedules/" + scheduleId).header("Authorization", "Bearer " + managerToken)
+            .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(Map.of(
+                "employeeId", employee.getId(), "shiftTemplateId", day.get("id").asText(), "workDate", "2026-11-06"))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.workDate").value("2026-11-06"));
+
+        // Kéo thả đè vào ca chiều trùng giờ -> Vi phạm ràng buộc cứng -> Báo lỗi 409
+        mvc.perform(put("/api/v1/work-schedules/" + scheduleId).header("Authorization", "Bearer " + managerToken)
+            .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(Map.of(
+                "employeeId", employee.getId(), "shiftTemplateId", afternoon.get("id").asText(), "workDate", "2026-11-05"))))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("SCHEDULE_OVERLAP"));
+    }
+
+    @Test void publish_warnsOnOvertimeUntilConfirmed() throws Exception {
+        var longShift = shift("08:00", "18:00", 0); // 10 giờ
+        // Phân 5 ca (50 giờ > 48 giờ)
+        for (String date : List.of("2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06")) {
+            assign(managerToken, employee, longShift, date).andExpect(status().isCreated());
+        }
+
+        // Bấm công bố mà không xác nhận vượt giờ -> Bị chặn báo OVERTIME_WARNING
+        mvc.perform(post("/api/v1/work-schedules/publish").header("Authorization", "Bearer " + managerToken)
+            .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(Map.of(
+                "from", "2026-11-02", "to", "2026-11-08", "confirmOvertime", false))))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("OVERTIME_WARNING"));
+
+        // Khi quản lý xác nhận -> Công bố thành công
+        mvc.perform(post("/api/v1/work-schedules/publish").header("Authorization", "Bearer " + managerToken)
+            .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(Map.of(
+                "from", "2026-11-02", "to", "2026-11-08", "confirmOvertime", true))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.publishedCount").value(5));
     }
 
     Account save(String name, Role role, UUID managerId) {

@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.*;
 public class ScheduleController {
     private final ScheduleService service;
     public ScheduleController(ScheduleService service) { this.service = service; }
+
     @GetMapping("/shift-templates")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public PageResponse<ShiftResponse> shifts(@AuthenticationPrincipal Jwt jwt,
@@ -28,12 +29,14 @@ public class ScheduleController {
         @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
         return service.shifts(actor(jwt), page, size);
     }
+
     @PostMapping("/shift-templates")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<ShiftResponse> createShift(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody CreateShift request) {
         var result = service.createShift(actor(jwt), request);
         return ResponseEntity.created(URI.create("/api/v1/shift-templates/" + result.id())).body(result);
     }
+
     @GetMapping("/work-schedules")
     @PreAuthorize("hasAnyRole('EMPLOYEE','MANAGER','ADMIN')")
     public PageResponse<ScheduleResponse> list(@AuthenticationPrincipal Jwt jwt,
@@ -44,16 +47,33 @@ public class ScheduleController {
         @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
         return service.list(actor(jwt), from, to, employeeId, page, size);
     }
+
     @PostMapping("/work-schedules")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<ScheduleResponse> assign(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody AssignShift request) {
         var result = service.assign(actor(jwt), request);
         return ResponseEntity.created(URI.create("/api/v1/work-schedules/" + result.id())).body(result);
     }
+
+    @PutMapping("/work-schedules/{id}")
+    @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
+    public ResponseEntity<ScheduleResponse> reassign(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID id, @Valid @RequestBody ReassignShift request) {
+        var result = service.reassign(actor(jwt), id, request);
+        return ResponseEntity.ok(result);
+    }
+
+    @PostMapping("/work-schedules/publish")
+    @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
+    public ResponseEntity<PublishScheduleResponse> publish(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody PublishScheduleRequest request) {
+        var result = service.publish(actor(jwt), request);
+        return ResponseEntity.ok(result);
+    }
+
     @DeleteMapping("/work-schedules/{id}")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<Void> cancel(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID id) {
         service.cancel(actor(jwt), id); return ResponseEntity.noContent().build();
     }
+
     private UUID actor(Jwt jwt) { return UUID.fromString(jwt.getSubject()); }
 }
