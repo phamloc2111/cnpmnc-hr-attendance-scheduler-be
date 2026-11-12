@@ -8,6 +8,8 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class PushRepository {
     public record Job(UUID id, UUID deviceId, UUID employeeId, UUID sessionId, String token, LocalDate weekStart, String kind, int attempts, UUID leaseToken) {}
+    public record NotificationLogEntry(UUID id, UUID employeeId, String kind, String title, String body, UUID referenceId, Instant sentAt) {}
+
     private final JdbcTemplate jdbc;
     public PushRepository(JdbcTemplate jdbc) { this.jdbc = jdbc; }
     public void subscribe(UUID employee, UUID session, String token, String hash, Instant now) {
@@ -41,5 +43,44 @@ public class PushRepository {
         jdbc.update("UPDATE notification_deliveries SET status=?,next_attempt_at=?,error_code=?,lease_until=NULL,lease_token=NULL WHERE id=? AND lease_token=?",
             status,time(next),code,job.id(),job.leaseToken());
     }
+
+    public List<String> findTokensByEmployeeId(UUID employeeId) {
+        return jdbc.queryForList("SELECT token FROM notification_devices WHERE employee_id = ?", String.class, employeeId);
+    }
+
+    public boolean hasReceivedShiftReminder(UUID scheduleId, String kind) {
+        return Boolean.TRUE.equals(jdbc.queryForObject(
+            "SELECT EXISTS(SELECT 1 FROM shift_reminder_deliveries WHERE schedule_id = ? AND kind = ?)",
+            Boolean.class, scheduleId, kind));
+    }
+
+    public void recordShiftReminder(UUID scheduleId, UUID employeeId, String kind, Instant sentAt) {
+        jdbc.update(
+            "INSERT INTO shift_reminder_deliveries (id, schedule_id, employee_id, kind, sent_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+            UUID.randomUUID(), scheduleId, employeeId, kind, time(sentAt));
+    }
+
+    public void recordNotificationLog(UUID employeeId, String kind, String title, String body, UUID referenceId, Instant sentAt) {
+        jdbc.update(
+            "INSERT INTO notification_logs (id, employee_id, kind, title, body, reference_id, sent_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            UUID.randomUUID(), employeeId, kind, title, body, referenceId, time(sentAt));
+    }
+
+    public List<NotificationLogEntry> getRecentNotifications(UUID employeeId, int limit) {
+        return jdbc.query(
+            "SELECT id, employee_id, kind, title, body, reference_id, sent_at FROM notification_logs WHERE employee_id = ? ORDER BY sent_at DESC LIMIT ?",
+            (rs, i) -> new NotificationLogEntry(
+                rs.getObject("id", UUID.class),
+                rs.getObject("employee_id", UUID.class),
+                rs.getString("kind"),
+                rs.getString("title"),
+                rs.getString("body"),
+                rs.getObject("reference_id", UUID.class),
+                rs.getTimestamp("sent_at").toInstant()
+            ),
+            employeeId, limit
+        );
+    }
+
     private OffsetDateTime time(Instant now) { return OffsetDateTime.ofInstant(now,ZoneOffset.UTC); }
 }
