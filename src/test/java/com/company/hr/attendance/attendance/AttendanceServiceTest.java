@@ -71,6 +71,17 @@ class AttendanceServiceTest {
         verifyNoInteractions(schedules, events, records);
     }
 
+    @Test void jpegLabelWithInvalidBytes_isRejectedBeforeAiAndWithoutPersisting() {
+        var mislabeled = new MockMultipartFile("photo", "timemark.jpg", "image/jpeg", "not a JPEG".getBytes());
+
+        var error = assertThrows(AttendanceException.class, () ->
+            service.record(employee, scheduleId, EventType.CHECK_IN, mislabeled));
+
+        assertEquals("INVALID_ATTENDANCE", error.getCode());
+        assertEquals(HttpStatus.BAD_REQUEST, error.getStatus());
+        verifyNoInteractions(timemarkReader, schedules, events, records);
+    }
+
     @Test void photoMissingTime_isRejectedWithoutPersisting() {
         when(timemarkReader.read(any())).thenReturn(
             new TimemarkAnalysisResponse(true, null, 10.0, 106.0, "TP.HCM", null));

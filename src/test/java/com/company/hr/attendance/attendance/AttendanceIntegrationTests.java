@@ -105,6 +105,25 @@ class AttendanceIntegrationTests {
         }
         return builder.param("scheduleId", id.toString()).param("type", "CHECK_IN");
     }
+    @Test void invalidImageIsRejectedAndClientCoordinatesCannotOverrideOcr() throws Exception {
+        mvc.perform(multipart("/api/v1/attendance/events")
+            .file(new MockMultipartFile("photo", "timemark.jpg", "image/jpeg", "not a JPEG".getBytes()))
+            .param("scheduleId", shiftId.toString()).param("type", "CHECK_IN")
+            .header("Authorization", "Bearer " + employeeToken))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("INVALID_ATTENDANCE"));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM attendance_events", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM attendance_records", Integer.class)).isZero();
+
+        mvc.perform(upload(shiftId, true)
+            .param("latitude", "90").param("longitude", "180")
+            .param("timemarkCapturedAt", "2000-01-01T00:00:00Z")
+            .param("timemarkLatitude", "90").param("timemarkLongitude", "180")
+            .header("Authorization", "Bearer " + employeeToken))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.latitude").value(10.7726))
+            .andExpect(jsonPath("$.longitude").value(106.6579));
+    }
     @Test void uploadIsPrivateUniqueAndResultsIncludeAbsence() throws Exception {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM flyway_schema_history WHERE version = '7' AND success", Integer.class)).isEqualTo(1);
         mvc.perform(upload(shiftId, false).header("Authorization", "Bearer " + employeeToken))
