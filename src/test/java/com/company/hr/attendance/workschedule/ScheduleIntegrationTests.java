@@ -3,6 +3,7 @@ package com.company.hr.attendance.workschedule;
 import com.company.hr.attendance.identity.PostgresTestConfig;
 import com.company.hr.attendance.identity.domain.*;
 import com.company.hr.attendance.identity.infrastructure.*;
+import com.company.hr.attendance.workschedule.WorkScheduleApi;
 import com.fasterxml.jackson.databind.*;
 import java.util.*;
 import java.util.concurrent.*;
@@ -22,11 +23,12 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.*;
+import org.springframework.transaction.support.TransactionTemplate;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-@SpringBootTest
+@SpringBootTest(properties = "app.scheduling.max-weekly-minutes=2400")
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @Import(PostgresTestConfig.class)
@@ -38,6 +40,8 @@ class ScheduleIntegrationTests {
     @Autowired PasswordEncoder passwords;
     @Autowired JdbcTemplate jdbc;
     @Autowired DataSource dataSource;
+    @Autowired WorkScheduleApi scheduleDirectory;
+    @Autowired TransactionTemplate transactions;
     Account admin, manager, otherManager, employee, outsider;
     String adminToken, managerToken, employeeToken;
     static final UUID POSITION_ID = UUID.fromString("00000000-0000-0000-0000-000000000051");
@@ -69,6 +73,38 @@ class ScheduleIntegrationTests {
             .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
             .andExpect(jsonPath("$.items[0].requiredPosition").value("Thu ngân"))
             .andExpect(jsonPath("$.items[0].startsAt").value("2026-11-09T00:00:00Z"));
+    }
+
+    @Test void draftAssignmentIsVisibleToManagerButNotEmployeeOrAttendance() throws Exception {
+        var template = shift("07:00", "11:00", 0);
+        var created = json(mvc.perform(post("/api/v1/work-schedules/draft-assignments")
+            .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
+            .content(mapper.writeValueAsString(Map.of("employeeId", employee.getId(),
+                "shiftTemplateId", template.get("id").asText(), "workDate", "2026-11-05"))))
+            .andExpect(status().isCreated()).andExpect(jsonPath("$.draft").value(true)));
+        mvc.perform(get("/api/v1/work-schedules").header("Authorization", "Bearer " + managerToken)
+            .param("from", "2026-11-02").param("to", "2026-11-08"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
+            .andExpect(jsonPath("$.items[0].draft").value(true));
+        mvc.perform(get("/api/v1/work-schedules").header("Authorization", "Bearer " + employeeToken)
+            .param("from", "2026-11-02").param("to", "2026-11-08"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(0));
+        var locked = transactions.execute(ignored -> scheduleDirectory.lock(
+            UUID.fromString(created.get("id").asText())));
+        assertThat(locked.isEmpty()).isTrue();
+        assertThat(scheduleDirectory.employeeShifts(List.of(employee.getId()),
+            java.time.LocalDate.parse("2026-11-02"), java.time.LocalDate.parse("2026-11-08"))).isEmpty();
+    }
+
+    @Test void oneClickDraftReportsShortagesWhenNobodyRegistered() throws Exception {
+        shift("07:00", "11:00", 0);
+        mvc.perform(post("/api/v1/work-schedules/drafts")
+            .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"weekStart\":\"2026-11-16\"}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.createdCount").value(0))
+            .andExpect(jsonPath("$.missingCount").value(7))
+            .andExpect(jsonPath("$.shortages.length()").value(7));
+        assertThat(jdbc.queryForObject("select count(*) from work_schedules", Integer.class)).isZero();
     }
 
     @Test void list_legacyShiftWithoutPosition_returnsNullablePosition() throws Exception {

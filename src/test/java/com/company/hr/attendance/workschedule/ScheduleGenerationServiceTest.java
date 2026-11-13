@@ -4,6 +4,7 @@ import com.company.hr.attendance.identity.IdentityApi;
 import com.company.hr.attendance.priority.PriorityService;
 import com.company.hr.attendance.registration.infrastructure.RegistrationRepository;
 import com.company.hr.attendance.workschedule.api.ScheduleModels.GenerateSchedule;
+import com.company.hr.attendance.workschedule.api.ScheduleModels.GenerateDraft;
 import com.company.hr.attendance.workschedule.application.ScheduleException;
 import com.company.hr.attendance.workschedule.application.ScheduleGenerationService;
 import com.company.hr.attendance.workschedule.domain.ShiftTemplate;
@@ -53,6 +54,7 @@ class ScheduleGenerationServiceTest {
         when(identity.scoreProfiles(any())).thenReturn(Map.of(
             anna, profile(anna, "Anna"), binh, profile(binh, "Binh")));
         when(templates.findAllById(any())).thenReturn(List.of(shift));
+        when(templates.findAll()).thenReturn(List.of(shift));
         when(registrations.selections(eq(WEEK), any())).thenReturn(Map.of(
             anna, Set.of(shift.getId()), binh, Set.of(shift.getId())));
         when(schedules.findByEmployeeIdInAndStartsAtLessThanAndEndsAtGreaterThan(any(), any(), any()))
@@ -142,6 +144,34 @@ class ScheduleGenerationServiceTest {
         var request = new GenerateSchedule(WEEK, UUID.randomUUID(), List.of(shift.getId()), List.of(WEEK));
         assertThatThrownBy(() -> service.generate(manager, request))
             .isInstanceOfSatisfying(ScheduleException.class, error -> assertThat(error.getCode()).isEqualTo("FORBIDDEN"));
+        verify(schedules, never()).saveAllAndFlush(any());
+    }
+
+    @Test
+    void weeklyDraftKeepsFilledSeatsAndReportsTheRemainingSeats() {
+        var demanding = new ShiftTemplate("Ca sáng", LocalTime.of(8, 0), LocalTime.of(12, 0),
+            0, manager, 2, "Phục vụ", position, false);
+        when(templates.findAll()).thenReturn(List.of(demanding));
+        when(templates.findAllById(any())).thenReturn(List.of(demanding));
+        when(registrations.selections(eq(WEEK), any())).thenReturn(Map.of(anna, Set.of(demanding.getId())));
+
+        var result = service.generateDraft(manager, new GenerateDraft(WEEK, null));
+
+        assertThat(result.createdCount()).isEqualTo(2);
+        assertThat(result.missingCount()).isEqualTo(12);
+        assertThat(result.shortages()).hasSize(7);
+        assertThat(result.items()).allMatch(item -> item.draft());
+        verify(schedules).saveAllAndFlush(any());
+    }
+
+    @Test
+    void noAvailableEmployeeStillReturnsShortagesWithoutSaving() {
+        when(registrations.selections(eq(WEEK), any())).thenReturn(Map.of());
+
+        var result = service.generateDraft(manager, new GenerateDraft(WEEK, null));
+
+        assertThat(result.createdCount()).isZero();
+        assertThat(result.missingCount()).isEqualTo(7);
         verify(schedules, never()).saveAllAndFlush(any());
     }
 

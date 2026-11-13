@@ -59,6 +59,17 @@ public class ScheduleController {
     public GenerationResponse generate(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody GenerateSchedule request) {
         return generation.generate(actor(jwt), request);
     }
+    @PostMapping("/work-schedules/drafts")
+    @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
+    public DraftGenerationResponse generateDraft(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody GenerateDraft request) {
+        return generation.generateDraft(actor(jwt), request);
+    }
+    @PostMapping("/work-schedules/draft-assignments")
+    @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
+    public ResponseEntity<ScheduleResponse> assignDraft(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody AssignShift request) {
+        var result = service.assignDraft(actor(jwt), request);
+        return ResponseEntity.created(URI.create("/api/v1/work-schedules/" + result.id())).body(result);
+    }
     @DeleteMapping("/work-schedules/{id}")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<Void> cancel(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID id) {

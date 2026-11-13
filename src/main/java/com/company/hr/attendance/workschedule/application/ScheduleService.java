@@ -62,7 +62,8 @@ public class ScheduleService {
             cb.between(root.get("workDate"), from, to);
         if (actor.role().equals("EMPLOYEE")) {
             if (employeeId != null && !employeeId.equals(actorId)) throw forbidden();
-            filter = filter.and((root, ignored, cb) -> cb.equal(root.get("employeeId"), actorId));
+            filter = filter.and((root, ignored, cb) -> cb.and(
+                cb.equal(root.get("employeeId"), actorId), cb.isFalse(root.get("draft"))));
         } else if (actor.role().equals("MANAGER")) {
             var ids = identity.managedEmployeeIds(actorId);
             if (employeeId != null && !ids.contains(employeeId)) throw notFound();
@@ -79,6 +80,13 @@ public class ScheduleService {
     }
     @Transactional
     public ScheduleResponse assign(UUID actorId, AssignShift request) {
+        return assign(actorId, request, false);
+    }
+    @Transactional
+    public ScheduleResponse assignDraft(UUID actorId, AssignShift request) {
+        return assign(actorId, request, true);
+    }
+    private ScheduleResponse assign(UUID actorId, AssignShift request, boolean draft) {
         var actor = management(actorId);
         // All schedule writes for one employee share this row lock, including concurrent HTTP requests.
         var employee = identity.lockPerson(request.employeeId());
@@ -86,7 +94,7 @@ public class ScheduleService {
         if (employee.locked()) throw new ScheduleException(CONFLICT, "EMPLOYEE_LOCKED", "Nhân viên đang bị khóa tài khoản.");
         var shift = shifts.findById(request.shiftTemplateId()).orElseThrow(() ->
             new ScheduleException(NOT_FOUND, "SHIFT_NOT_FOUND", "Không tìm thấy mẫu ca."));
-        var schedule = new WorkSchedule(employee.id(), shift, request.workDate(), zone, actorId);
+        var schedule = new WorkSchedule(employee.id(), shift, request.workDate(), zone, actorId, draft);
         if (schedules.existsByEmployeeIdAndStartsAtLessThanAndEndsAtGreaterThan(
             employee.id(), schedule.getEndsAt(), schedule.getStartsAt())) {
             throw new ScheduleException(CONFLICT, "SCHEDULE_OVERLAP", "Nhân viên đã có ca trùng giờ, kể cả ca từ ngày trước.");
