@@ -10,6 +10,7 @@ hoặc có kỹ năng trùng tên vị trí, không trùng giờ với lịch hi
 không vượt trần phút làm việc của tuần tính theo ngày bắt đầu ca. Nhu cầu của
 mỗi mẫu ca/ngày là `requiredHeadcount`; lịch hiện có của nhân viên thuộc nhóm được
 tính vào nhu cầu. Thiếu người vẫn giữ phần đã xếp và trả cảnh báo theo US35.
+Thuật toán tự động bỏ qua mẫu ca gắn với vị trí đã ngừng sử dụng và không tính chúng là ca thiếu người.
 
 Trong các phương án hợp lệ, thuật toán thử người điểm ưu tiên cao trước. Bằng
 điểm thì người có ít phút đã xếp trong tuần được chọn trước; nếu vẫn bằng nhau,

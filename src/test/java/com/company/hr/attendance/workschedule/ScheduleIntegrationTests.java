@@ -124,6 +124,37 @@ class ScheduleIntegrationTests {
             .andExpect(status().isMethodNotAllowed());
     }
 
+    @Test void oneClickDraftSkipsTemplatesWhosePositionWasDeactivated() throws Exception {
+        shift("07:00", "11:00", 0);
+        jdbc.update("UPDATE organization_positions SET active=false WHERE id=?", POSITION_ID);
+
+        mvc.perform(post("/api/v1/work-schedules/drafts")
+            .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"weekStart\":\"2026-11-16\"}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.createdCount").value(0))
+            .andExpect(jsonPath("$.missingCount").value(0));
+        mvc.perform(get("/api/v1/work-schedules/draft-warnings")
+            .header("Authorization", "Bearer " + managerToken).param("weekStart", "2026-11-16"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.draftExists").value(true))
+            .andExpect(jsonPath("$.missingCount").value(0));
+
+        var activePosition = UUID.randomUUID();
+        jdbc.update("insert into organization_positions(id,name,normalized_name,active,version) values (?,?,?,true,0)",
+            activePosition, "Phục vụ", "phục vụ");
+        var activeShift = new HashMap<>(shiftBody("12:00", "16:00", 0));
+        activeShift.put("requiredPositionId", activePosition);
+        mvc.perform(post("/api/v1/shift-templates").header("Authorization", "Bearer " + managerToken)
+            .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(activeShift)))
+            .andExpect(status().isCreated());
+        mvc.perform(post("/api/v1/work-schedules/drafts")
+            .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"weekStart\":\"2026-11-16\"}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.missingCount").value(7));
+        mvc.perform(get("/api/v1/work-schedules/draft-warnings")
+            .header("Authorization", "Bearer " + managerToken).param("weekStart", "2026-11-16"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.missingCount").value(7));
+    }
+
     @Test void draftWarningsRecalculateShortagesAndOvertimeAfterManualAssignment() throws Exception {
         var template = shift("07:00", "22:00", 0);
         mvc.perform(post("/api/v1/work-schedules/drafts")

@@ -1,6 +1,7 @@
 package com.company.hr.attendance.workschedule.application;
 
 import com.company.hr.attendance.identity.IdentityApi;
+import com.company.hr.attendance.organization.PositionsApi;
 import com.company.hr.attendance.workschedule.api.ScheduleModels.DraftOvertime;
 import com.company.hr.attendance.workschedule.api.ScheduleModels.DraftShortage;
 import com.company.hr.attendance.workschedule.api.ScheduleModels.DraftWarningsResponse;
@@ -28,15 +29,17 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(readOnly = true)
 public class ScheduleDraftWarningsService {
     private final IdentityApi identity;
+    private final PositionsApi positions;
     private final ShiftTemplateRepository templates;
     private final WorkScheduleRepository schedules;
     private final ScheduleDraftWeekRepository draftWeeks;
     private final long maxWeeklyMinutes;
 
-    public ScheduleDraftWarningsService(IdentityApi identity, ShiftTemplateRepository templates,
+    public ScheduleDraftWarningsService(IdentityApi identity, PositionsApi positions, ShiftTemplateRepository templates,
         WorkScheduleRepository schedules, ScheduleDraftWeekRepository draftWeeks,
         @Value("${app.scheduling.max-weekly-minutes:0}") long maxWeeklyMinutes) {
         this.identity = identity;
+        this.positions = positions;
         this.templates = templates;
         this.schedules = schedules;
         this.draftWeeks = draftWeeks;
@@ -70,8 +73,12 @@ public class ScheduleDraftWarningsService {
                 Duration.between(row.getStartsAt(), row.getEndsAt()).toMinutes() - row.getBreakMinutes()), Long::sum);
         }
         var shortages = new ArrayList<DraftShortage>();
-        var selected = templates.findAll().stream()
-            .filter(template -> template.getRequiredPositionId() != null && template.getRequiredHeadcount() > 0)
+        var allTemplates = templates.findAll();
+        var activePositions = positions.activeIds(allTemplates.stream().map(ShiftTemplate::getRequiredPositionId)
+            .filter(java.util.Objects::nonNull).distinct().toList());
+        var selected = allTemplates.stream()
+            .filter(template -> activePositions.contains(template.getRequiredPositionId())
+                && template.getRequiredHeadcount() > 0)
             .sorted(Comparator.comparing(ShiftTemplate::getName).thenComparing(ShiftTemplate::getId)).toList();
         for (int day = 0; day < 7; day++) {
             var date = weekStart.plusDays(day);

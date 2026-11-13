@@ -2,6 +2,7 @@ package com.company.hr.attendance.workschedule.application;
 
 import com.company.hr.attendance.identity.IdentityApi;
 import com.company.hr.attendance.identity.IdentityApi.ScoreProfile;
+import com.company.hr.attendance.organization.PositionsApi;
 import com.company.hr.attendance.priority.PriorityService;
 import com.company.hr.attendance.registration.infrastructure.RegistrationRepository;
 import com.company.hr.attendance.workschedule.api.ScheduleModels.GenerateDraft;
@@ -39,6 +40,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class ScheduleGenerationService {
     private final IdentityApi identity;
+    private final PositionsApi positions;
     private final ShiftTemplateRepository templates;
     private final WorkScheduleRepository schedules;
     private final ScheduleDraftWeekRepository draftWeeks;
@@ -48,13 +50,14 @@ public class ScheduleGenerationService {
     private final long maxWeeklyMinutes;
     private final long minWeeklyMinutes;
 
-    public ScheduleGenerationService(IdentityApi identity, ShiftTemplateRepository templates,
+    public ScheduleGenerationService(IdentityApi identity, PositionsApi positions, ShiftTemplateRepository templates,
         WorkScheduleRepository schedules, ScheduleDraftWeekRepository draftWeeks,
         RegistrationRepository registrations, PriorityService priority,
         @Value("${app.timezone:Asia/Ho_Chi_Minh}") String timezone,
         @Value("${app.scheduling.max-weekly-minutes:0}") long maxWeeklyMinutes,
         @Value("${app.scheduling.min-weekly-minutes:0}") long minWeeklyMinutes) {
         this.identity = identity;
+        this.positions = positions;
         this.templates = templates;
         this.schedules = schedules;
         this.draftWeeks = draftWeeks;
@@ -69,8 +72,12 @@ public class ScheduleGenerationService {
     public DraftGenerationResponse generateDraft(UUID actorId, GenerateDraft request) {
         var actor = identity.person(actorId);
         if (actor.locked() || !Set.of("MANAGER", "ADMIN").contains(actor.role())) throw forbidden();
-        var templateIds = templates.findAll().stream()
-            .filter(template -> template.getRequiredPositionId() != null && template.getRequiredHeadcount() > 0)
+        var allTemplates = templates.findAll();
+        var activePositions = positions.activeIds(allTemplates.stream().map(ShiftTemplate::getRequiredPositionId)
+            .filter(java.util.Objects::nonNull).distinct().toList());
+        var templateIds = allTemplates.stream()
+            .filter(template -> activePositions.contains(template.getRequiredPositionId())
+                && template.getRequiredHeadcount() > 0)
             .map(ShiftTemplate::getId).toList();
         var dates = IntStream.range(0, 7).mapToObj(request.weekStart()::plusDays).toList();
         var output = plan(actorId, new PlanRequest(request.weekStart(), request.managerId(), templateIds, dates));

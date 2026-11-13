@@ -1,6 +1,7 @@
 package com.company.hr.attendance.workschedule;
 
 import com.company.hr.attendance.identity.IdentityApi;
+import com.company.hr.attendance.organization.PositionsApi;
 import com.company.hr.attendance.priority.PriorityService;
 import com.company.hr.attendance.registration.infrastructure.RegistrationRepository;
 import com.company.hr.attendance.workschedule.api.ScheduleModels.GenerateDraft;
@@ -30,6 +31,7 @@ import static org.mockito.Mockito.*;
 class ScheduleGenerationServiceTest {
     private static final LocalDate WEEK = LocalDate.of(2026, 11, 16);
     private final IdentityApi identity = mock(IdentityApi.class);
+    private final PositionsApi positions = mock(PositionsApi.class);
     private final ShiftTemplateRepository templates = mock(ShiftTemplateRepository.class);
     private final WorkScheduleRepository schedules = mock(WorkScheduleRepository.class);
     private final ScheduleDraftWeekRepository draftWeeks = mock(ScheduleDraftWeekRepository.class);
@@ -45,7 +47,7 @@ class ScheduleGenerationServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new ScheduleGenerationService(identity, templates, schedules, draftWeeks, registrations, priority,
+        service = new ScheduleGenerationService(identity, positions, templates, schedules, draftWeeks, registrations, priority,
             "Asia/Ho_Chi_Minh", 480, 0);
         when(identity.person(manager)).thenReturn(new IdentityApi.Person(manager, "Manager", "MANAGER", false, null));
         when(identity.lockPerson(manager)).thenReturn(new IdentityApi.Person(manager, "Manager", "MANAGER", false, null));
@@ -56,6 +58,7 @@ class ScheduleGenerationServiceTest {
             anna, profile(anna, "Anna"), binh, profile(binh, "Binh")));
         when(templates.findAllById(any())).thenReturn(List.of(shift));
         when(templates.findAll()).thenReturn(List.of(shift));
+        when(positions.activeIds(any())).thenReturn(Set.of(position));
         when(registrations.selections(eq(WEEK), any())).thenReturn(Map.of(
             anna, Set.of(shift.getId()), binh, Set.of(shift.getId())));
         when(schedules.findByEmployeeIdInAndStartsAtLessThanAndEndsAtGreaterThan(any(), any(), any()))
@@ -106,7 +109,7 @@ class ScheduleGenerationServiceTest {
 
     @Test
     void unconfiguredWeeklyMaximumPreventsGeneration() {
-        service = new ScheduleGenerationService(identity, templates, schedules, draftWeeks, registrations, priority,
+        service = new ScheduleGenerationService(identity, positions, templates, schedules, draftWeeks, registrations, priority,
             "Asia/Ho_Chi_Minh", 0, 0);
         assertThatThrownBy(() -> service.generateDraft(manager, request()))
             .isInstanceOfSatisfying(ScheduleException.class, error ->
@@ -116,7 +119,7 @@ class ScheduleGenerationServiceTest {
 
     @Test
     void weeklyMinimumNeverForcesInvalidAssignments() {
-        service = new ScheduleGenerationService(identity, templates, schedules, draftWeeks, registrations, priority,
+        service = new ScheduleGenerationService(identity, positions, templates, schedules, draftWeeks, registrations, priority,
             "Asia/Ho_Chi_Minh", 480, 300);
 
         var result = service.generateDraft(manager, request());
