@@ -14,6 +14,9 @@ public class ShiftPass {
     @Column(nullable = false)
     private UUID scheduleId;
 
+    @Column(unique = true)
+    private UUID openScheduleId;
+
     @Column(nullable = false)
     private UUID requesterId;
 
@@ -77,6 +80,7 @@ public class ShiftPass {
     ) {
         this.id = UUID.randomUUID();
         this.scheduleId = scheduleId;
+        this.openScheduleId = scheduleId;
         this.requesterId = requesterId;
         this.workDate = workDate;
         this.shiftName = shiftName;
@@ -92,6 +96,7 @@ public class ShiftPass {
 
     public UUID getId() { return id; }
     public UUID getScheduleId() { return scheduleId; }
+    public UUID getOpenScheduleId() { return openScheduleId; }
     public UUID getRequesterId() { return requesterId; }
     public UUID getClaimerId() { return claimerId; }
     public LocalDate getWorkDate() { return workDate; }
@@ -109,16 +114,19 @@ public class ShiftPass {
 
     public void cancel(Instant now) {
         this.status = ShiftPassStatus.CANCELLED;
+        this.openScheduleId = null;
         this.closedAt = now;
     }
 
     public void expire(Instant now) {
         this.status = ShiftPassStatus.EXPIRED;
+        this.openScheduleId = null;
         this.closedAt = now;
     }
 
     public void markClaimed(UUID claimerId, Instant now) {
         this.status = ShiftPassStatus.CLAIMED;
+        this.openScheduleId = null;
         this.claimerId = claimerId;
         this.claimedAt = now;
         this.closedAt = now;
