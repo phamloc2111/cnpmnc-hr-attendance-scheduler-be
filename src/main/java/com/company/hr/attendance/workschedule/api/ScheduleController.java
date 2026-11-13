@@ -2,6 +2,7 @@ package com.company.hr.attendance.workschedule.api;
 
 import com.company.hr.attendance.workschedule.api.ScheduleModels.*;
 import com.company.hr.attendance.workschedule.application.ScheduleService;
+import com.company.hr.attendance.workschedule.application.ScheduleGenerationService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import java.net.URI;
@@ -20,7 +21,10 @@ import org.springframework.web.bind.annotation.*;
 @Validated
 public class ScheduleController {
     private final ScheduleService service;
-    public ScheduleController(ScheduleService service) { this.service = service; }
+    private final ScheduleGenerationService generation;
+    public ScheduleController(ScheduleService service, ScheduleGenerationService generation) {
+        this.service = service; this.generation = generation;
+    }
     @GetMapping("/shift-templates")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public PageResponse<ShiftResponse> shifts(@AuthenticationPrincipal Jwt jwt,
@@ -49,6 +53,11 @@ public class ScheduleController {
     public ResponseEntity<ScheduleResponse> assign(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody AssignShift request) {
         var result = service.assign(actor(jwt), request);
         return ResponseEntity.created(URI.create("/api/v1/work-schedules/" + result.id())).body(result);
+    }
+    @PostMapping("/work-schedules/generate")
+    @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
+    public GenerationResponse generate(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody GenerateSchedule request) {
+        return generation.generate(actor(jwt), request);
     }
     @DeleteMapping("/work-schedules/{id}")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
