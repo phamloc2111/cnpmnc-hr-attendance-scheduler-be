@@ -27,6 +27,6 @@ public class AttendanceExceptionHandler {
         ConstraintViolationException.class, HandlerMethodValidationException.class})
     ResponseEntity<ApiError> invalid(Exception error, HttpServletRequest request) {
         return ResponseEntity.badRequest().body(ApiError.of("INVALID_ATTENDANCE",
-            "Cần ảnh JPEG/PNG dưới 5 MB, ca làm việc, lượt vào/ra và vị trí hiện tại hợp lệ.", request.getRequestURI()));
+            "Cần ảnh JPEG, PNG hoặc WEBP dưới 5 MB, ca làm việc và lượt vào/ra hợp lệ.", request.getRequestURI()));
     }
 }
