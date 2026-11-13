@@ -11,6 +11,8 @@ public interface IdentityApi {
     Person person(UUID id);
     Person lockPerson(UUID id);
     List<UUID> managedEmployeeIds(UUID managerId);
+    List<UUID> activeEmployeeIdsByPosition(UUID positionId);
+    List<UUID> activeEmployeeIdsByManager(UUID managerId);
     Page<Person> managedEmployees(UUID managerId, String query, int page, int size);
     Page<Person> employeePage(UUID actorId, String query, int page, int size);
     boolean canReceiveRegistrationReminders(UUID employeeId, UUID sessionId);

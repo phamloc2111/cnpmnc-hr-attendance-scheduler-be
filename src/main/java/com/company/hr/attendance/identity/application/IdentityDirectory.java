@@ -37,6 +37,16 @@ public class IdentityDirectory implements IdentityApi {
     public List<UUID> managedEmployeeIds(UUID managerId) {
         return accounts.findByManagerIdAndRole(managerId, Role.EMPLOYEE).stream().map(Account::getId).toList();
     }
+    @Override
+    public List<UUID> activeEmployeeIdsByPosition(UUID positionId) {
+        if (positionId == null) return List.of();
+        return accounts.findByPositionIdAndRoleAndLockedFalse(positionId, Role.EMPLOYEE).stream().map(Account::getId).toList();
+    }
+    @Override
+    public List<UUID> activeEmployeeIdsByManager(UUID managerId) {
+        if (managerId == null) return List.of();
+        return accounts.findByManagerIdAndRoleAndLockedFalse(managerId, Role.EMPLOYEE).stream().map(Account::getId).toList();
+    }
     public Page<Person> managedEmployees(UUID managerId, String query, int page, int size) {
         Specification<Account> filters = (root, ignored, cb) -> cb.and(
             cb.equal(root.get("managerId"), managerId), cb.equal(root.get("role"), Role.EMPLOYEE));

@@ -43,5 +43,23 @@ public class FirebasePushGateway implements PushGateway {
             return error.getMessagingErrorCode() == MessagingErrorCode.UNREGISTERED ? Result.INVALID_TOKEN : Result.RETRY;
         }
     }
+    @Override
+    public Result sendCustom(java.util.UUID userId, String token, String title, String body, String tag, java.util.Map<String, String> data, Instant expiresAt, Instant now) {
+        if (app == null) return Result.RETRY;
+        long ttl = Math.max(0, Duration.between(now, expiresAt).getSeconds());
+        if (ttl == 0) return Result.RETRY;
+        var builder = Message.builder().setToken(token)
+            .putData("employeeId", userId.toString()).putData("expiresAt", expiresAt.toString())
+            .putData("title", title).putData("body", body).putData("tag", tag);
+        if (data != null) {
+            data.forEach((k, v) -> { if (k != null && v != null) builder.putData(k, v); });
+        }
+        var message = builder.setWebpushConfig(WebpushConfig.builder().putHeader("TTL", Long.toString(ttl)).putHeader("Urgency", "high").build()).build();
+        try { FirebaseMessaging.getInstance(app).send(message); return Result.SENT; }
+        catch (FirebaseMessagingException error) {
+            log.warn("FCM custom delivery rejected: {}", error.getMessagingErrorCode());
+            return error.getMessagingErrorCode() == MessagingErrorCode.UNREGISTERED ? Result.INVALID_TOKEN : Result.RETRY;
+        }
+    }
     @PreDestroy void close() { if (app != null) app.delete(); }
 }

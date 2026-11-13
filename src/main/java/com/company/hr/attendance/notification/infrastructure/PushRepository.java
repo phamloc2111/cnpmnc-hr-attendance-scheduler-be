@@ -8,6 +8,7 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class PushRepository {
     public record Job(UUID id, UUID deviceId, UUID employeeId, UUID sessionId, String token, LocalDate weekStart, String kind, int attempts, UUID leaseToken) {}
+    public record DeviceTarget(UUID id, UUID employeeId, UUID sessionId, String token) {}
     private final JdbcTemplate jdbc;
     public PushRepository(JdbcTemplate jdbc) { this.jdbc = jdbc; }
     public void subscribe(UUID employee, UUID session, String token, String hash, Instant now) {
@@ -22,6 +23,15 @@ public class PushRepository {
     public int deviceCount(UUID employee) { return jdbc.queryForObject("SELECT count(*) FROM notification_devices WHERE employee_id=?",Integer.class,employee); }
     public boolean owns(UUID employee, String hash) { return Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM notification_devices WHERE employee_id=? AND token_hash=?)",Boolean.class,employee,hash)); }
     public void remove(UUID id) { jdbc.update("DELETE FROM notification_devices WHERE id=?",id); }
+    public List<DeviceTarget> devicesForUsers(Collection<UUID> userIds) {
+        if (userIds == null || userIds.isEmpty()) return List.of();
+        var ids = userIds.stream().distinct().toList();
+        String placeholders = String.join(",", Collections.nCopies(ids.size(), "?"));
+        return jdbc.query("SELECT id, employee_id, session_id, token FROM notification_devices WHERE employee_id IN (" + placeholders + ")",
+            (row, index) -> new DeviceTarget(row.getObject("id", UUID.class), row.getObject("employee_id", UUID.class),
+                row.getObject("session_id", UUID.class), row.getString("token")),
+            ids.toArray());
+    }
     public void enqueue(LocalDate week, String kind, Instant now) {
         jdbc.update("INSERT INTO notification_deliveries(id,device_id,week_start,kind,next_attempt_at) " +
             "SELECT gen_random_uuid(),id,?,?,? FROM notification_devices ON CONFLICT(device_id,week_start,kind) DO NOTHING",week,kind,time(now));
