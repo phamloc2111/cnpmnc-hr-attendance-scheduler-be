@@ -155,6 +155,21 @@ class ScheduleIntegrationTests {
             .andExpect(status().isOk()).andExpect(jsonPath("$.missingCount").value(7));
     }
 
+    @Test void oneClickDraftSkipsLegacyTemplateWithoutPositionId() throws Exception {
+        var legacyShift = shift("07:00", "11:00", 0);
+        jdbc.update("UPDATE work_shift_templates SET required_position_id=NULL WHERE id=?",
+            UUID.fromString(legacyShift.get("id").asText()));
+
+        mvc.perform(post("/api/v1/work-schedules/drafts")
+            .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"weekStart\":\"2026-11-16\"}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.createdCount").value(0))
+            .andExpect(jsonPath("$.missingCount").value(0));
+        mvc.perform(get("/api/v1/work-schedules/draft-warnings")
+            .header("Authorization", "Bearer " + managerToken).param("weekStart", "2026-11-16"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.missingCount").value(0));
+    }
+
     @Test void draftWarningsRecalculateShortagesAndOvertimeAfterManualAssignment() throws Exception {
         var template = shift("07:00", "22:00", 0);
         mvc.perform(post("/api/v1/work-schedules/drafts")

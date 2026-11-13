@@ -77,7 +77,8 @@ public class ScheduleDraftWarningsService {
         var activePositions = positions.activeIds(allTemplates.stream().map(ShiftTemplate::getRequiredPositionId)
             .filter(java.util.Objects::nonNull).distinct().toList());
         var selected = allTemplates.stream()
-            .filter(template -> activePositions.contains(template.getRequiredPositionId())
+            .filter(template -> template.getRequiredPositionId() != null
+                && activePositions.contains(template.getRequiredPositionId())
                 && template.getRequiredHeadcount() > 0)
             .sorted(Comparator.comparing(ShiftTemplate::getName).thenComparing(ShiftTemplate::getId)).toList();
         for (int day = 0; day < 7; day++) {

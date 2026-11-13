@@ -76,7 +76,8 @@ public class ScheduleGenerationService {
         var activePositions = positions.activeIds(allTemplates.stream().map(ShiftTemplate::getRequiredPositionId)
             .filter(java.util.Objects::nonNull).distinct().toList());
         var templateIds = allTemplates.stream()
-            .filter(template -> activePositions.contains(template.getRequiredPositionId())
+            .filter(template -> template.getRequiredPositionId() != null
+                && activePositions.contains(template.getRequiredPositionId())
                 && template.getRequiredHeadcount() > 0)
             .map(ShiftTemplate::getId).toList();
         var dates = IntStream.range(0, 7).mapToObj(request.weekStart()::plusDays).toList();
