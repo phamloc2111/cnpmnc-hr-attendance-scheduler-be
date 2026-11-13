@@ -13,6 +13,10 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 import java.time.YearMonth;
+import java.time.ZoneId;
+import java.time.format.DateTimeParseException;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import java.util.List;
 import java.util.UUID;
 
@@ -50,7 +54,16 @@ public class LeaveController {
         @RequestParam(required = false) String month
     ) {
         UUID employeeId = UUID.fromString(jwt.getSubject());
-        YearMonth ym = month != null && !month.isBlank() ? YearMonth.parse(month) : YearMonth.now();
+        YearMonth ym;
+        if (month != null && !month.isBlank()) {
+            try {
+                ym = YearMonth.parse(month.strip());
+            } catch (DateTimeParseException ex) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Định dạng tháng không hợp lệ (YYYY-MM).");
+            }
+        } else {
+            ym = YearMonth.now(ZoneId.of("Asia/Ho_Chi_Minh"));
+        }
         return ResponseEntity.ok(leaveService.getQuota(employeeId, ym));
     }
 

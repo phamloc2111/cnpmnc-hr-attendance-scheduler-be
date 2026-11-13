@@ -79,7 +79,7 @@ class LeaveServiceTests {
         UUID schedId = UUID.randomUUID();
 
         when(identity.person(mgrId)).thenReturn(new IdentityApi.Person(mgrId, "Manager", "MANAGER", false, null));
-        when(identity.person(empId)).thenReturn(new IdentityApi.Person(empId, "Employee", "EMPLOYEE", false, null));
+        when(identity.person(empId)).thenReturn(new IdentityApi.Person(empId, "Employee", "EMPLOYEE", false, mgrId));
 
         var leave = new LeaveRequest(leaveId, empId, schedId, LocalDate.of(2026, 11, 20), null, "Ca sáng", "Việc gia đình", java.time.Instant.now());
         when(leaveRepository.findById(leaveId)).thenReturn(Optional.of(leave));

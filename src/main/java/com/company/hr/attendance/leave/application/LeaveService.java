@@ -20,7 +20,9 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.time.YearMonth;
+import java.time.ZoneOffset;
 import java.util.*;
 
 @Service
@@ -138,8 +140,17 @@ public class LeaveService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Bạn không có quyền xem danh sách đơn nghỉ phép.");
         }
 
+        Set<UUID> managedIds = actor.role().equals("MANAGER")
+            ? new HashSet<>(identity.managedEmployeeIds(actorId))
+            : null;
+        if (managedIds != null && employeeId != null && !managedIds.contains(employeeId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Bạn không có quyền xem đơn nghỉ phép của nhân viên ngoài nhóm.");
+        }
         Specification<LeaveRequest> spec = (root, query, cb) -> {
             var predicates = new ArrayList<jakarta.persistence.criteria.Predicate>();
+            if (managedIds != null) {
+                predicates.add(managedIds.isEmpty() ? cb.disjunction() : root.get("employeeId").in(managedIds));
+            }
             if (status != null) {
                 predicates.add(cb.equal(root.get("status"), status));
             }
@@ -175,11 +186,16 @@ public class LeaveService {
         var req = leaveRepository.findById(requestId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy đơn xin nghỉ phép."));
 
+        var employee = identity.person(req.getEmployeeId());
+        if ("MANAGER".equals(actor.role()) && (employee == null || !actorId.equals(employee.managerId()))) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Bạn chỉ có quyền duyệt đơn nghỉ phép của nhân viên mình quản lý.");
+        }
         if (req.getStatus() != LeaveStatus.PENDING) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Đơn xin nghỉ phép đã được xử lý trước đó.");
         }
 
         Instant now = Instant.now();
+        OffsetDateTime nowUtc = OffsetDateTime.ofInstant(now, ZoneOffset.UTC);
         String action = reviewRequest.action().toUpperCase();
         if ("APPROVE".equals(action)) {
             req.approve(actorId, reviewRequest.note(), now);
@@ -189,6 +205,21 @@ public class LeaveService {
                 } catch (Exception ex) {
                     // ignore if column not yet added
                 }
+            }
+            try {
+                String leaveNote = "Đơn xin nghỉ phép đã được duyệt: " + req.getShiftName();
+                int updatedReview = jdbc.update(
+                    "UPDATE diligence_day_reviews SET absence = 'APPROVED_LEAVE', note = ?, revision = revision + 1, reviewed_by = ?, reviewed_at = ? WHERE employee_id = ? AND work_date = ?",
+                    leaveNote, actorId, nowUtc, req.getEmployeeId(), java.sql.Date.valueOf(req.getWorkDate())
+                );
+                if (updatedReview == 0) {
+                    jdbc.update(
+                        "INSERT INTO diligence_day_reviews(employee_id, work_date, absence, early_leave_approved, missing, note, revision, reviewed_by, reviewed_at) VALUES (?, ?, 'APPROVED_LEAVE', FALSE, 'AUTO', ?, 1, ?, ?)",
+                        req.getEmployeeId(), java.sql.Date.valueOf(req.getWorkDate()), leaveNote, actorId, nowUtc
+                    );
+                }
+            } catch (Exception ex) {
+                // non-fatal if diligence table unavailable
             }
         } else if ("REJECT".equals(action)) {
             req.reject(actorId, reviewRequest.note(), now);
@@ -205,7 +236,7 @@ public class LeaveService {
         try {
             jdbc.update(
                 "INSERT INTO notification_logs (id, employee_id, kind, title, body, reference_id, sent_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                UUID.randomUUID(), req.getEmployeeId(), "LEAVE_RESULT", title, body, req.getId(), now
+                UUID.randomUUID(), req.getEmployeeId(), "LEAVE_RESULT", title, body, req.getId(), nowUtc
             );
         } catch (Exception ex) {
             // non-fatal
