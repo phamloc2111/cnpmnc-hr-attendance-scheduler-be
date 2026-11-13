@@ -17,6 +17,27 @@ public class AttendanceVerificationService {
         @Value("${app.attendance.verification.max-time-difference-seconds:300}") long maxTimeDifferenceSeconds) {
         this.workplaces = workplaces; this.maxTimeDifferenceSeconds = maxTimeDifferenceSeconds;
     }
+    public void verify(TimemarkEvidence timemark, Instant serverTime) {
+        if (timemark == null) {
+            throw new AttendanceException(HttpStatus.UNPROCESSABLE_ENTITY, "ATTENDANCE_VERIFICATION_FAILED",
+                "Không có thông tin xác minh từ ảnh Timemark. Vui lòng chụp và gửi lại ảnh tại điểm làm việc.");
+        }
+        verify(timemark.latitude(), timemark.longitude(), timemark.capturedAt(), serverTime);
+    }
+
+    public void verify(Double latitude, Double longitude, Instant capturedAt, Instant serverTime) {
+        var workplace = workplaces.current().orElseThrow(() -> new AttendanceException(HttpStatus.SERVICE_UNAVAILABLE,
+            "WORKPLACE_NOT_CONFIGURED", "Chưa cấu hình điểm làm việc. Vui lòng liên hệ quản lý vào mục Điểm làm việc để thiết lập tọa độ và bán kính."));
+        var reasons = new ArrayList<String>();
+        validateCoordinates(latitude, longitude, "Vị trí trên ảnh Timemark", workplace, reasons);
+        if (capturedAt == null || maxTimeDifferenceSeconds < 0 ||
+            Duration.between(capturedAt, serverTime).abs().compareTo(Duration.ofSeconds(maxTimeDifferenceSeconds)) > 0) {
+            reasons.add("Thời gian trên ảnh Timemark không khớp giờ máy chủ");
+        }
+        if (!reasons.isEmpty()) throw new AttendanceException(HttpStatus.UNPROCESSABLE_ENTITY, "ATTENDANCE_VERIFICATION_FAILED",
+            String.join("; ", reasons) + ". Vui lòng chụp và gửi lại ảnh tại điểm làm việc.");
+    }
+
     public void verify(Double deviceLatitude, Double deviceLongitude, Double accuracyMeters,
                        TimemarkEvidence timemark, Instant serverTime) {
         var workplace = workplaces.current().orElseThrow(() -> new AttendanceException(HttpStatus.SERVICE_UNAVAILABLE,

@@ -45,6 +45,8 @@ class AttendanceIntegrationTests {
     @Autowired ShiftTemplateRepository templates;
     @Autowired PasswordEncoder encoder;
     @Autowired JdbcTemplate jdbc;
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    com.company.hr.attendance.attendance.application.TimemarkReader timemarkReader;
     private static final String PASSWORD = "Test-password-123!";
     private UUID shiftId;
     private UUID absentId;
@@ -62,6 +64,9 @@ class AttendanceIntegrationTests {
         shiftId = UUID.randomUUID(); absentId = UUID.randomUUID();
         schedule(shiftId, employee.getId(), template.getId(), now.minusSeconds(60), now.plusSeconds(3600));
         schedule(absentId, employee.getId(), template.getId(), now.minusSeconds(7200), now.minusSeconds(3600));
+        org.mockito.Mockito.when(timemarkReader.read(org.mockito.ArgumentMatchers.any())).thenAnswer(inv ->
+            new com.company.hr.attendance.attendance.api.AttendanceModels.TimemarkAnalysisResponse(
+                true, Instant.now().toString(), 10.7726, 106.6579, "268 Lý Thường Kiệt", null));
     }
     @AfterEach void cleanup() { clear(); }
     private void clear() {
@@ -92,16 +97,13 @@ class AttendanceIntegrationTests {
             VALUES (?, ?, ?, ?, 'Ca sáng', ?, ?, 60, 'Asia/Ho_Chi_Minh', ?)
             """, id, employee, template, date, java.sql.Timestamp.from(start), java.sql.Timestamp.from(end), employee);
     }
-    private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder upload(UUID id, boolean location) {
-        var request = multipart("/api/v1/attendance/events")
-            .file(new MockMultipartFile("photo", "timemark.jpg", "image/jpeg",
-                new byte[]{(byte) 0xff, (byte) 0xd8, (byte) 0xff, 1}))
-            .param("scheduleId", id.toString()).param("type", "CHECK_IN");
-        if (location) request.param("locatedAt", Instant.now().toString())
-            .param("latitude", "10.7726").param("longitude", "106.6579").param("accuracyMeters", "5.0")
-            .param("timemarkCapturedAt", Instant.now().toString())
-            .param("timemarkLatitude", "10.7726").param("timemarkLongitude", "106.6579");
-        return request;
+    private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder upload(UUID id, boolean withPhoto) {
+        var builder = multipart("/api/v1/attendance/events");
+        if (withPhoto) {
+            builder.file(new MockMultipartFile("photo", "timemark.jpg", "image/jpeg",
+                new byte[]{(byte) 0xff, (byte) 0xd8, (byte) 0xff, 1}));
+        }
+        return builder.param("scheduleId", id.toString()).param("type", "CHECK_IN");
     }
     @Test void uploadIsPrivateUniqueAndResultsIncludeAbsence() throws Exception {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM flyway_schema_history WHERE version = '7' AND success", Integer.class)).isEqualTo(1);
