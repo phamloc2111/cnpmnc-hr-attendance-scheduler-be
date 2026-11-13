@@ -66,6 +66,7 @@ class ShiftPassIntegrationTests {
         templates.deleteAll();
         sessions.deleteAll();
         jdbc.update("DELETE FROM identity_account_skills");
+        jdbc.update("UPDATE identity_accounts SET manager_id = NULL");
         accounts.deleteAll();
         positions.deleteAll();
 
