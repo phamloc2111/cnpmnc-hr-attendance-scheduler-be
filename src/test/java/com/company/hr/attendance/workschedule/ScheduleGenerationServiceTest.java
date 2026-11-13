@@ -3,13 +3,13 @@ package com.company.hr.attendance.workschedule;
 import com.company.hr.attendance.identity.IdentityApi;
 import com.company.hr.attendance.priority.PriorityService;
 import com.company.hr.attendance.registration.infrastructure.RegistrationRepository;
-import com.company.hr.attendance.workschedule.api.ScheduleModels.GenerateSchedule;
 import com.company.hr.attendance.workschedule.api.ScheduleModels.GenerateDraft;
 import com.company.hr.attendance.workschedule.application.ScheduleException;
 import com.company.hr.attendance.workschedule.application.ScheduleGenerationService;
 import com.company.hr.attendance.workschedule.domain.ShiftTemplate;
 import com.company.hr.attendance.workschedule.domain.WorkSchedule;
 import com.company.hr.attendance.workschedule.infrastructure.ShiftTemplateRepository;
+import com.company.hr.attendance.workschedule.infrastructure.ScheduleDraftWeekRepository;
 import com.company.hr.attendance.workschedule.infrastructure.WorkScheduleRepository;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -32,6 +32,7 @@ class ScheduleGenerationServiceTest {
     private final IdentityApi identity = mock(IdentityApi.class);
     private final ShiftTemplateRepository templates = mock(ShiftTemplateRepository.class);
     private final WorkScheduleRepository schedules = mock(WorkScheduleRepository.class);
+    private final ScheduleDraftWeekRepository draftWeeks = mock(ScheduleDraftWeekRepository.class);
     private final RegistrationRepository registrations = mock(RegistrationRepository.class);
     private final PriorityService priority = mock(PriorityService.class);
     private final UUID manager = UUID.randomUUID();
@@ -44,7 +45,7 @@ class ScheduleGenerationServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new ScheduleGenerationService(identity, templates, schedules, registrations, priority,
+        service = new ScheduleGenerationService(identity, templates, schedules, draftWeeks, registrations, priority,
             "Asia/Ho_Chi_Minh", 480, 0);
         when(identity.person(manager)).thenReturn(new IdentityApi.Person(manager, "Manager", "MANAGER", false, null));
         when(identity.lockPerson(manager)).thenReturn(new IdentityApi.Person(manager, "Manager", "MANAGER", false, null));
@@ -65,24 +66,11 @@ class ScheduleGenerationServiceTest {
 
     @Test
     void createsOnlyRegisteredQualifiedHighestPriorityEmployee() {
-        var result = service.generate(manager, request());
-        assertThat(result.createdCount()).isEqualTo(1);
-        assertThat(result.items()).extracting(item -> item.employeeId()).containsExactly(anna);
+        var result = service.generateDraft(manager, request());
+        assertThat(result.createdCount()).isPositive();
+        assertThat(result.items().get(0).employeeId()).isEqualTo(anna);
+        assertThat(result.items()).allMatch(item -> item.draft());
         verify(schedules).saveAllAndFlush(any());
-    }
-
-    @Test
-    void incompleteHeadcountDoesNotPersistAnyRows() {
-        var demanding = new ShiftTemplate("Ca sáng", LocalTime.of(8, 0), LocalTime.of(12, 0),
-            0, manager, 2, "Phục vụ", position, false);
-        when(templates.findAllById(any())).thenReturn(List.of(demanding));
-        when(registrations.selections(eq(WEEK), any())).thenReturn(Map.of(anna, Set.of(demanding.getId())));
-        var request = new GenerateSchedule(WEEK, null, List.of(demanding.getId()), List.of(WEEK));
-
-        assertThatThrownBy(() -> service.generate(manager, request))
-            .isInstanceOfSatisfying(ScheduleException.class, error ->
-                assertThat(error.getCode()).isEqualTo("SCHEDULE_UNFILLABLE"));
-        verify(schedules, never()).saveAllAndFlush(any());
     }
 
     @Test
@@ -90,18 +78,16 @@ class ScheduleGenerationServiceTest {
         when(schedules.findByEmployeeIdInAndStartsAtLessThanAndEndsAtGreaterThan(any(), any(), any()))
             .thenReturn(List.of(new WorkSchedule(anna, shift, WEEK, java.time.ZoneId.of("Asia/Ho_Chi_Minh"), manager)));
 
-        var result = service.generate(manager, request());
-        assertThat(result.createdCount()).isZero();
-        verify(schedules, never()).saveAllAndFlush(any());
+        var result = service.generateDraft(manager, request());
+        assertThat(result.items()).noneMatch(item -> item.workDate().equals(WEEK));
     }
 
     @Test
     void noRegistrationCannotBeTreatedAsAvailability() {
         when(registrations.selections(eq(WEEK), any())).thenReturn(Map.of());
 
-        assertThatThrownBy(() -> service.generate(manager, request()))
-            .isInstanceOfSatisfying(ScheduleException.class, error ->
-                assertThat(error.getCode()).isEqualTo("SCHEDULE_UNFILLABLE"));
+        var result = service.generateDraft(manager, request());
+        assertThat(result.missingCount()).isEqualTo(7);
         verify(schedules, never()).saveAllAndFlush(any());
     }
 
@@ -113,36 +99,35 @@ class ScheduleGenerationServiceTest {
             binh, new IdentityApi.ScoreProfile(binh, "Binh", false, manager,
                 Instant.parse("2025-01-01T00:00:00Z"), UUID.randomUUID(), List.of())));
 
-        assertThatThrownBy(() -> service.generate(manager, request()))
-            .isInstanceOfSatisfying(ScheduleException.class, error ->
-                assertThat(error.getCode()).isEqualTo("SCHEDULE_UNFILLABLE"));
+        var result = service.generateDraft(manager, request());
+        assertThat(result.missingCount()).isEqualTo(7);
         verify(schedules, never()).saveAllAndFlush(any());
     }
 
     @Test
     void unconfiguredWeeklyMaximumPreventsGeneration() {
-        service = new ScheduleGenerationService(identity, templates, schedules, registrations, priority,
+        service = new ScheduleGenerationService(identity, templates, schedules, draftWeeks, registrations, priority,
             "Asia/Ho_Chi_Minh", 0, 0);
-        assertThatThrownBy(() -> service.generate(manager, request()))
+        assertThatThrownBy(() -> service.generateDraft(manager, request()))
             .isInstanceOfSatisfying(ScheduleException.class, error ->
                 assertThat(error.getCode()).isEqualTo("SCHEDULING_POLICY_NOT_CONFIGURED"));
         verify(schedules, never()).saveAllAndFlush(any());
     }
 
     @Test
-    void weeklyMinimumIsOnlyReportedAndNeverForcesInvalidAssignments() {
-        service = new ScheduleGenerationService(identity, templates, schedules, registrations, priority,
+    void weeklyMinimumNeverForcesInvalidAssignments() {
+        service = new ScheduleGenerationService(identity, templates, schedules, draftWeeks, registrations, priority,
             "Asia/Ho_Chi_Minh", 480, 300);
 
-        var result = service.generate(manager, request());
-        assertThat(result.createdCount()).isEqualTo(1);
-        assertThat(result.belowMinimumEmployeeCount()).isEqualTo(2);
+        var result = service.generateDraft(manager, request());
+        assertThat(result.createdCount()).isPositive();
+        assertThat(result.missingCount()).isPositive();
     }
 
     @Test
     void managerCannotGenerateForAnotherTeam() {
-        var request = new GenerateSchedule(WEEK, UUID.randomUUID(), List.of(shift.getId()), List.of(WEEK));
-        assertThatThrownBy(() -> service.generate(manager, request))
+        var request = new GenerateDraft(WEEK, UUID.randomUUID());
+        assertThatThrownBy(() -> service.generateDraft(manager, request))
             .isInstanceOfSatisfying(ScheduleException.class, error -> assertThat(error.getCode()).isEqualTo("FORBIDDEN"));
         verify(schedules, never()).saveAllAndFlush(any());
     }
@@ -162,6 +147,7 @@ class ScheduleGenerationServiceTest {
         assertThat(result.shortages()).hasSize(7);
         assertThat(result.items()).allMatch(item -> item.draft());
         verify(schedules).saveAllAndFlush(any());
+        verify(draftWeeks).createIfAbsent(any(), eq(manager), eq(WEEK));
     }
 
     @Test
@@ -173,10 +159,11 @@ class ScheduleGenerationServiceTest {
         assertThat(result.createdCount()).isZero();
         assertThat(result.missingCount()).isEqualTo(7);
         verify(schedules, never()).saveAllAndFlush(any());
+        verify(draftWeeks).createIfAbsent(any(), eq(manager), eq(WEEK));
     }
 
-    private GenerateSchedule request() {
-        return new GenerateSchedule(WEEK, null, List.of(shift.getId()), List.of(WEEK));
+    private GenerateDraft request() {
+        return new GenerateDraft(WEEK, null);
     }
 
     private IdentityApi.ScoreProfile profile(UUID id, String name) {

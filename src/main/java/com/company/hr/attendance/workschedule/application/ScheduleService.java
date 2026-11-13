@@ -22,13 +22,16 @@ public class ScheduleService {
     private final IdentityApi identity;
     private final ShiftTemplateRepository shifts;
     private final WorkScheduleRepository schedules;
+    private final ScheduleDraftWeekRepository draftWeeks;
     private final ZoneId zone;
     private final PositionsApi positions;
     private final AttendanceApi attendance;
     public ScheduleService(IdentityApi identity, ShiftTemplateRepository shifts, WorkScheduleRepository schedules,
+                           ScheduleDraftWeekRepository draftWeeks,
                            @Value("${app.timezone:Asia/Ho_Chi_Minh}") String timezone, PositionsApi positions,
                            AttendanceApi attendance) {
-        this.identity = identity; this.shifts = shifts; this.schedules = schedules; this.zone = ZoneId.of(timezone);
+        this.identity = identity; this.shifts = shifts; this.schedules = schedules; this.draftWeeks = draftWeeks;
+        this.zone = ZoneId.of(timezone);
         this.positions = positions; this.attendance = attendance;
     }
     public PageResponse<ShiftResponse> shifts(UUID actorId, int page, int size) {
@@ -99,7 +102,15 @@ public class ScheduleService {
             employee.id(), schedule.getEndsAt(), schedule.getStartsAt())) {
             throw new ScheduleException(CONFLICT, "SCHEDULE_OVERLAP", "Nhân viên đã có ca trùng giờ, kể cả ca từ ngày trước.");
         }
-        return ScheduleResponse.from(schedules.saveAndFlush(schedule), employee.name(), shift.getRequiredPosition());
+        var saved = schedules.saveAndFlush(schedule);
+        if (draft) {
+            UUID managerId = actor.role().equals("MANAGER") ? actorId : employee.managerId();
+            if (managerId != null) {
+                var weekStart = request.workDate().with(java.time.temporal.TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+                draftWeeks.createIfAbsent(UUID.randomUUID(), managerId, weekStart);
+            }
+        }
+        return ScheduleResponse.from(saved, employee.name(), shift.getRequiredPosition());
     }
     @Transactional
     public void cancel(UUID actorId, UUID id) {

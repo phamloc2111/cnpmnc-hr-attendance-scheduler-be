@@ -48,6 +48,7 @@ class ScheduleIntegrationTests {
     static final String PASSWORD = "Test-password-123!";
 
     @BeforeEach void seed() throws Exception {
+        jdbc.update("DELETE FROM schedule_draft_weeks");
         jdbc.update("DELETE FROM work_schedules");
         jdbc.update("DELETE FROM work_shift_templates");
         sessions.deleteAll();
@@ -94,10 +95,14 @@ class ScheduleIntegrationTests {
         assertThat(locked.isEmpty()).isTrue();
         assertThat(scheduleDirectory.employeeShifts(List.of(employee.getId()),
             java.time.LocalDate.parse("2026-11-02"), java.time.LocalDate.parse("2026-11-08"))).isEmpty();
+        mvc.perform(get("/api/v1/work-schedules/draft-warnings")
+            .header("Authorization", "Bearer " + managerToken).param("weekStart", "2026-11-02"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.draftExists").value(true))
+            .andExpect(jsonPath("$.missingCount").value(6));
     }
 
     @Test void oneClickDraftReportsShortagesWhenNobodyRegistered() throws Exception {
-        shift("07:00", "11:00", 0);
+        var template = shift("07:00", "11:00", 0);
         mvc.perform(post("/api/v1/work-schedules/drafts")
             .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
             .content("{\"weekStart\":\"2026-11-16\"}"))
@@ -105,6 +110,43 @@ class ScheduleIntegrationTests {
             .andExpect(jsonPath("$.missingCount").value(7))
             .andExpect(jsonPath("$.shortages.length()").value(7));
         assertThat(jdbc.queryForObject("select count(*) from work_schedules", Integer.class)).isZero();
+        mvc.perform(get("/api/v1/work-schedules/draft-warnings")
+            .header("Authorization", "Bearer " + managerToken).param("weekStart", "2026-11-16"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.draftExists").value(true))
+            .andExpect(jsonPath("$.missingCount").value(7))
+            .andExpect(jsonPath("$.shortages[0].shiftTemplateId").value(template.get("id").asText()));
+        mvc.perform(get("/api/v1/work-schedules/draft-warnings")
+            .header("Authorization", "Bearer " + employeeToken).param("weekStart", "2026-11-16"))
+            .andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/work-schedules/generate")
+            .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
+            .content("{}"))
+            .andExpect(status().isMethodNotAllowed());
+    }
+
+    @Test void draftWarningsRecalculateShortagesAndOvertimeAfterManualAssignment() throws Exception {
+        var template = shift("07:00", "22:00", 0);
+        mvc.perform(post("/api/v1/work-schedules/drafts")
+            .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"weekStart\":\"2026-11-16\"}"))
+            .andExpect(status().isOk());
+        for (int day = 16; day <= 18; day++) {
+            mvc.perform(post("/api/v1/work-schedules/draft-assignments")
+                .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.of("employeeId", employee.getId(),
+                    "shiftTemplateId", template.get("id").asText(), "workDate", "2026-11-" + day))))
+                .andExpect(status().isCreated());
+        }
+        mvc.perform(get("/api/v1/work-schedules/draft-warnings")
+            .header("Authorization", "Bearer " + managerToken).param("weekStart", "2026-11-16"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.missingCount").value(4))
+            .andExpect(jsonPath("$.overtime[0].employeeId").value(employee.getId().toString()))
+            .andExpect(jsonPath("$.overtime[0].weeklyMinutes").value(2700))
+            .andExpect(jsonPath("$.overtime[0].exceededMinutes").value(300));
+        mvc.perform(get("/api/v1/work-schedules/draft-warnings")
+            .header("Authorization", "Bearer " + token(otherManager)).param("weekStart", "2026-11-16"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.draftExists").value(false))
+            .andExpect(jsonPath("$.overtime.length()").value(0));
     }
 
     @Test void list_legacyShiftWithoutPosition_returnsNullablePosition() throws Exception {

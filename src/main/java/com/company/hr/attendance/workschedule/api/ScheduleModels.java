@@ -30,15 +30,13 @@ public final class ScheduleModels {
         }
     }
     public record AssignShift(@NotNull UUID employeeId, @NotNull UUID shiftTemplateId, @NotNull LocalDate workDate) {}
-    public record GenerateSchedule(@NotNull LocalDate weekStart, UUID managerId,
-        @NotEmpty @Size(max = 20) List<@NotNull UUID> shiftTemplateIds,
-        @NotEmpty @Size(max = 7) List<@NotNull LocalDate> workDates) {}
     public record GenerateDraft(@NotNull LocalDate weekStart, UUID managerId) {}
     public record DraftShortage(LocalDate workDate, UUID shiftTemplateId, String shiftName, int missingCount) {}
     public record DraftGenerationResponse(LocalDate weekStart, int createdCount, int missingCount,
         List<DraftShortage> shortages, List<ScheduleResponse> items) {}
-    public record GenerationResponse(LocalDate weekStart, int createdCount, long maxWeeklyMinutes,
-        long minWeeklyMinutes, int belowMinimumEmployeeCount, List<ScheduleResponse> items) {}
+    public record DraftOvertime(UUID employeeId, String employeeName, long weeklyMinutes, long exceededMinutes) {}
+    public record DraftWarningsResponse(LocalDate weekStart, boolean draftExists, long maxWeeklyMinutes,
+        int missingCount, List<DraftShortage> shortages, List<DraftOvertime> overtime) {}
     public record ShiftResponse(UUID id, String name, LocalTime startTime, LocalTime endTime,
                                 int breakMinutes, int workingMinutes, boolean overnight,
                                 int requiredHeadcount, String requiredPosition, UUID requiredPositionId) {
