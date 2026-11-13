@@ -334,6 +334,12 @@ class ScheduleIntegrationTests {
         list(adminToken).andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(2));
         list(managerToken).andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
             .andExpect(jsonPath("$.items[0].employeeId").value(employee.getId().toString()));
+        // Draft schedules remain hidden from employees until published
+        list(employeeToken).andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(0));
+        mvc.perform(post("/api/v1/work-schedules/publish").header("Authorization", "Bearer " + adminToken)
+            .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(Map.of(
+                "from", "2026-11-02", "to", "2026-11-08", "confirmOvertime", true))))
+            .andExpect(status().isOk());
         list(employeeToken).andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
             .andExpect(jsonPath("$.items[0].employeeId").value(employee.getId().toString()));
         mvc.perform(get("/api/v1/work-schedules").header("Authorization", "Bearer " + employeeToken)
