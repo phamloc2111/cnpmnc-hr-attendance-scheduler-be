@@ -34,4 +34,5 @@ public class WorkSchedule {
     public Instant getEndsAt() { return endsAt; }
     public int getBreakMinutes() { return breakMinutes; }
     public String getTimezone() { return timezone; }
+    public void reassignEmployee(UUID employeeId) { this.employeeId = employeeId; }
 }

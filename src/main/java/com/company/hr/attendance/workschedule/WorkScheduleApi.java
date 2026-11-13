@@ -18,5 +18,6 @@ public interface WorkScheduleApi {
         Instant startsAt, Instant endsAt, int breakMinutes, UUID requiredPositionId, String requiredPosition) {}
     Optional<Shift> lock(UUID id);
     Optional<ShiftDetail> findDetail(UUID id);
+    boolean transferShift(UUID scheduleId, UUID expectedOwnerId, UUID newEmployeeId);
     Page<Shift> pageForManager(UUID actorId, LocalDate from, LocalDate to, UUID employeeId, int page, int size);
 }

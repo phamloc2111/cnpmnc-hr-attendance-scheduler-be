@@ -42,6 +42,25 @@ public class ShiftPassController {
             .body(service.myPasses(UUID.fromString(jwt.getSubject())));
     }
 
+    @GetMapping("/available")
+    @PreAuthorize("hasRole('EMPLOYEE')")
+    public ResponseEntity<List<AvailableShiftPassResponse>> available(@AuthenticationPrincipal Jwt jwt) {
+        return ResponseEntity.ok()
+            .cacheControl(CacheControl.noStore())
+            .body(service.availablePasses(UUID.fromString(jwt.getSubject())));
+    }
+
+    @PostMapping("/{id}/claim")
+    @PreAuthorize("hasRole('EMPLOYEE')")
+    public ResponseEntity<ShiftPassResponse> claim(
+        @AuthenticationPrincipal Jwt jwt,
+        @PathVariable UUID id
+    ) {
+        return ResponseEntity.ok()
+            .cacheControl(CacheControl.noStore())
+            .body(service.claimPass(UUID.fromString(jwt.getSubject()), id));
+    }
+
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('EMPLOYEE')")
     public ResponseEntity<Void> cancel(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID id) {

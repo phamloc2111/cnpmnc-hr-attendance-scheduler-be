@@ -16,6 +16,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class WorkScheduleDirectory implements WorkScheduleApi {
@@ -43,6 +44,21 @@ public class WorkScheduleDirectory implements WorkScheduleApi {
                 schedule.getWorkDate(), schedule.getShiftName(), schedule.getStartsAt(), schedule.getEndsAt(),
                 schedule.getBreakMinutes(), posId, posName);
         });
+    }
+    @Override
+    @Transactional
+    public boolean transferShift(UUID scheduleId, UUID expectedOwnerId, UUID newEmployeeId) {
+        var locked = schedules.lockById(scheduleId);
+        if (locked.isEmpty()) return false;
+        var schedule = locked.get();
+        if (!schedule.getEmployeeId().equals(expectedOwnerId)) return false;
+        if (schedules.existsByEmployeeIdAndStartsAtLessThanAndEndsAtGreaterThan(
+            newEmployeeId, schedule.getEndsAt(), schedule.getStartsAt())) {
+            return false;
+        }
+        schedule.reassignEmployee(newEmployeeId);
+        schedules.saveAndFlush(schedule);
+        return true;
     }
     @Override
     public Page<Shift> pageForManager(UUID actorId, LocalDate from, LocalDate to, UUID employeeId, int page, int size) {

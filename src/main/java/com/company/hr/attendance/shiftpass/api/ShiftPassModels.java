@@ -65,6 +65,58 @@ public final class ShiftPassModels {
         }
     }
 
+    public record AvailableShiftPassResponse(
+        UUID id,
+        UUID scheduleId,
+        UUID requesterId,
+        String requesterName,
+        LocalDate workDate,
+        String shiftName,
+        Instant startsAt,
+        Instant endsAt,
+        int breakMinutes,
+        long workingMinutes,
+        UUID requiredPositionId,
+        String requiredPosition,
+        String reason,
+        Instant createdAt,
+        boolean eligible,
+        String ineligibleReason,
+        long currentWeekMinutes,
+        long maxWeeklyMinutes
+    ) {
+        public static AvailableShiftPassResponse from(
+            ShiftPass pass,
+            String requesterName,
+            long workingMinutes,
+            boolean eligible,
+            String ineligibleReason,
+            long currentWeekMinutes,
+            long maxWeeklyMinutes
+        ) {
+            return new AvailableShiftPassResponse(
+                pass.getId(),
+                pass.getScheduleId(),
+                pass.getRequesterId(),
+                requesterName,
+                pass.getWorkDate(),
+                pass.getShiftName(),
+                pass.getStartsAt(),
+                pass.getEndsAt(),
+                pass.getBreakMinutes(),
+                workingMinutes,
+                pass.getRequiredPositionId(),
+                pass.getRequiredPosition(),
+                pass.getReason(),
+                pass.getCreatedAt(),
+                eligible,
+                ineligibleReason,
+                currentWeekMinutes,
+                maxWeeklyMinutes
+            );
+        }
+    }
+
     public record ShiftPassNotificationResponse(
         UUID id,
         UUID shiftPassId,
