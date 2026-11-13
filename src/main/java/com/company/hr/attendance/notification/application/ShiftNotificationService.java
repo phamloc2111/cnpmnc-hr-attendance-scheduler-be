@@ -70,9 +70,8 @@ public class ShiftNotificationService {
         Instant endWindow = now.plus(Duration.ofMinutes(35));
 
         var shifts = jdbc.query(
-            "SELECT ws.id, ws.employee_id, ws.starts_at, ws.ends_at, st.name as shift_name " +
+            "SELECT ws.id, ws.employee_id, ws.starts_at, ws.ends_at, ws.shift_name " +
             "FROM work_schedules ws " +
-            "JOIN shift_templates st ON ws.shift_template_id = st.id " +
             "WHERE ws.published = true AND ws.starts_at >= ? AND ws.starts_at <= ?",
             (rs, i) -> new ShiftCandidate(
                 rs.getObject("id", UUID.class),

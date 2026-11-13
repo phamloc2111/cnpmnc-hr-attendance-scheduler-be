@@ -62,7 +62,7 @@ public class SecurityConfig {
             .authorizeHttpRequests(authorize -> authorize
                 .requestMatchers("/api/v1/health", "/actuator/health/**").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/v1/auth/login").permitAll()
-                .requestMatchers(HttpMethod.POST, "/api/v1/notification-jobs/registration-reminders").permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/v1/notification-jobs/registration-reminders", "/api/v1/notification-jobs/shift-reminders").permitAll()
                 .anyRequest().authenticated())
             .build();
     }
