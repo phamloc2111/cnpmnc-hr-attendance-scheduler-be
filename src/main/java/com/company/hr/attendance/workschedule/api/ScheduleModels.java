@@ -33,6 +33,10 @@ public final class ScheduleModels {
     public record GenerateSchedule(@NotNull LocalDate weekStart, UUID managerId,
         @NotEmpty @Size(max = 20) List<@NotNull UUID> shiftTemplateIds,
         @NotEmpty @Size(max = 7) List<@NotNull LocalDate> workDates) {}
+    public record GenerateDraft(@NotNull LocalDate weekStart, UUID managerId) {}
+    public record DraftShortage(LocalDate workDate, UUID shiftTemplateId, String shiftName, int missingCount) {}
+    public record DraftGenerationResponse(LocalDate weekStart, int createdCount, int missingCount,
+        List<DraftShortage> shortages, List<ScheduleResponse> items) {}
     public record GenerationResponse(LocalDate weekStart, int createdCount, long maxWeeklyMinutes,
         long minWeeklyMinutes, int belowMinimumEmployeeCount, List<ScheduleResponse> items) {}
     public record ShiftResponse(UUID id, String name, LocalTime startTime, LocalTime endTime,
@@ -46,12 +50,12 @@ public final class ScheduleModels {
     }
     public record ScheduleResponse(UUID id, UUID employeeId, String employeeName, UUID shiftTemplateId,
         LocalDate workDate, String shiftName, Instant startsAt, Instant endsAt, int breakMinutes,
-        long workingMinutes, String timezone, String requiredPosition) {
+        long workingMinutes, String timezone, String requiredPosition, boolean draft) {
         public static ScheduleResponse from(WorkSchedule schedule, String name, String requiredPosition) {
             return new ScheduleResponse(schedule.getId(), schedule.getEmployeeId(), name, schedule.getShiftTemplateId(),
                 schedule.getWorkDate(), schedule.getShiftName(), schedule.getStartsAt(), schedule.getEndsAt(),
                 schedule.getBreakMinutes(), Duration.between(schedule.getStartsAt(), schedule.getEndsAt()).toMinutes()
-                    - schedule.getBreakMinutes(), schedule.getTimezone(), requiredPosition);
+                    - schedule.getBreakMinutes(), schedule.getTimezone(), requiredPosition, schedule.isDraft());
         }
     }
     public record PageResponse<T>(List<T> items, int page, int size, long totalElements, int totalPages) {

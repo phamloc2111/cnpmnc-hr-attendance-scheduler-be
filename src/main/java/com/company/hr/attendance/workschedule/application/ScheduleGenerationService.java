@@ -5,7 +5,10 @@ import com.company.hr.attendance.identity.IdentityApi.ScoreProfile;
 import com.company.hr.attendance.priority.PriorityService;
 import com.company.hr.attendance.registration.infrastructure.RegistrationRepository;
 import com.company.hr.attendance.workschedule.api.ScheduleModels.GenerateSchedule;
+import com.company.hr.attendance.workschedule.api.ScheduleModels.GenerateDraft;
 import com.company.hr.attendance.workschedule.api.ScheduleModels.GenerationResponse;
+import com.company.hr.attendance.workschedule.api.ScheduleModels.DraftGenerationResponse;
+import com.company.hr.attendance.workschedule.api.ScheduleModels.DraftShortage;
 import com.company.hr.attendance.workschedule.api.ScheduleModels.ScheduleResponse;
 import com.company.hr.attendance.workschedule.application.WeeklySchedulePlanner.Existing;
 import com.company.hr.attendance.workschedule.application.WeeklySchedulePlanner.Slot;
@@ -22,16 +25,18 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.IntStream;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Creates an all-or-nothing weekly schedule from registrations and priority scores. */
+/** Creates weekly schedules and private best-effort drafts from registrations and priority scores. */
 @Service
 public class ScheduleGenerationService {
     private final IdentityApi identity;
@@ -60,6 +65,33 @@ public class ScheduleGenerationService {
 
     @Transactional
     public GenerationResponse generate(UUID actorId, GenerateSchedule request) {
+        return plan(actorId, request, false).response();
+    }
+
+    @Transactional
+    public DraftGenerationResponse generateDraft(UUID actorId, GenerateDraft request) {
+        var actor = identity.person(actorId);
+        if (actor.locked() || !Set.of("MANAGER", "ADMIN").contains(actor.role())) throw forbidden();
+        var templateIds = templates.findAll().stream()
+            .filter(template -> template.getRequiredPositionId() != null && template.getRequiredHeadcount() > 0)
+            .map(ShiftTemplate::getId).toList();
+        var dates = IntStream.range(0, 7).mapToObj(request.weekStart()::plusDays).toList();
+        var output = plan(actorId, new GenerateSchedule(request.weekStart(), request.managerId(), templateIds, dates), true);
+        var missing = new LinkedHashMap<MissingSlot, Integer>();
+        for (var slot : output.unfilled()) {
+            missing.merge(new MissingSlot(slot.workDate(), slot.templateId()), 1, Integer::sum);
+        }
+        var shortages = missing.entrySet().stream().map(entry -> new DraftShortage(entry.getKey().date(),
+            entry.getKey().templateId(), output.templates().get(entry.getKey().templateId()).getName(), entry.getValue()))
+            .toList();
+        return new DraftGenerationResponse(request.weekStart(), output.response().createdCount(),
+            output.unfilled().size(), shortages, output.response().items());
+    }
+
+    private record MissingSlot(LocalDate date, UUID templateId) {}
+    private record PlanOutput(GenerationResponse response, List<Slot> unfilled, Map<UUID, ShiftTemplate> templates) {}
+
+    private PlanOutput plan(UUID actorId, GenerateSchedule request, boolean draft) {
         if (maxWeeklyMinutes <= 0 || maxWeeklyMinutes > 10_080 || minWeeklyMinutes < 0 || minWeeklyMinutes > maxWeeklyMinutes) {
             throw new ScheduleException(HttpStatus.SERVICE_UNAVAILABLE, "SCHEDULING_POLICY_NOT_CONFIGURED",
                 "Chưa cấu hình giới hạn giờ tuần hợp lệ (SCHEDULING_MAX_WEEKLY_MINUTES và SCHEDULING_MIN_WEEKLY_MINUTES).");
@@ -128,11 +160,12 @@ public class ScheduleGenerationService {
                 var window = ShiftWindow.of(date, template.getStartTime(), template.getEndTime(), zone);
                 int filled = (int) existing.stream().filter(row -> row.getWorkDate().equals(date)
                     && row.getShiftTemplateId().equals(template.getId())
+                    && (draft || !row.isDraft())
                     && qualified(profiles.get(row.getEmployeeId()), template)).count();
                 int missing = Math.max(0, template.getRequiredHeadcount() - filled);
-                if (slots.size() + missing > 200) {
+                if (slots.size() + missing > (draft ? 700 : 200)) {
                     throw new ScheduleException(HttpStatus.BAD_REQUEST, "SCHEDULE_TOO_LARGE",
-                        "Yêu cầu xếp quá 200 lượt ca; hãy chọn ít ngày hoặc mẫu ca hơn.");
+                        "Yêu cầu xếp lịch quá lớn; hãy giảm số mẫu ca hoặc số người cần mỗi ca.");
                 }
                 int minutes = ShiftWindow.durationMinutes(template.getStartTime(), template.getEndTime()) - template.getBreakMinutes();
                 for (int seat = 0; seat < missing; seat++) {
@@ -141,17 +174,19 @@ public class ScheduleGenerationService {
             }
         }
         var planner = new WeeklySchedulePlanner(week, maxWeeklyMinutes, slots, plannedExisting);
-        var plan = planner.plan();
-        if (planner.searchExhausted()) {
+        var partial = draft ? planner.planPartial() : null;
+        var complete = draft ? null : planner.plan();
+        if (!draft && planner.searchExhausted()) {
             throw new ScheduleException(HttpStatus.CONFLICT, "SCHEDULE_SEARCH_LIMIT",
                 "Yêu cầu xếp lịch quá phức tạp; hãy chọn ít ngày hoặc mẫu ca hơn. Chưa lưu lịch nào.");
         }
-        var result = plan.orElseThrow(() -> new ScheduleException(HttpStatus.CONFLICT, "SCHEDULE_UNFILLABLE",
-            "Không đủ nhân viên đã đăng ký, đúng vị trí và còn giờ để lấp đầy tất cả ca; chưa lưu lịch nào."));
+        var result = draft ? partial.assignments() : complete.orElseThrow(() ->
+            new ScheduleException(HttpStatus.CONFLICT, "SCHEDULE_UNFILLABLE",
+                "Không đủ nhân viên đã đăng ký, đúng vị trí và còn giờ để lấp đầy tất cả ca; chưa lưu lịch nào."));
         var created = new ArrayList<WorkSchedule>();
         for (var assignment : result) {
             created.add(new WorkSchedule(assignment.employeeId(), byId.get(assignment.slot().templateId()),
-                assignment.slot().workDate(), zone, actorId));
+                assignment.slot().workDate(), zone, actorId, draft));
         }
         if (!created.isEmpty()) schedules.saveAllAndFlush(created);
         var totalMinutes = new HashMap<UUID, Long>();
@@ -168,7 +203,8 @@ public class ScheduleGenerationService {
         }).filter(id -> totalMinutes.getOrDefault(id, 0L) < minWeeklyMinutes).count();
         var items = created.stream().map(row -> ScheduleResponse.from(row,
             profiles.get(row.getEmployeeId()).name(), byId.get(row.getShiftTemplateId()).getRequiredPosition())).toList();
-        return new GenerationResponse(week, items.size(), maxWeeklyMinutes, minWeeklyMinutes, belowMinimum, items);
+        return new PlanOutput(new GenerationResponse(week, items.size(), maxWeeklyMinutes, minWeeklyMinutes,
+            belowMinimum, items), draft ? partial.unfilled() : List.of(), byId);
     }
 
     private boolean qualified(ScoreProfile profile, ShiftTemplate template) {

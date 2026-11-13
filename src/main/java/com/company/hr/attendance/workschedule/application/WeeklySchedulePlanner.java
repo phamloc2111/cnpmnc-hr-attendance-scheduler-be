@@ -21,6 +21,7 @@ public final class WeeklySchedulePlanner {
     public record Existing(UUID employeeId, LocalDate workDate, Instant startsAt, Instant endsAt,
                            long workingMinutes) {}
     public record Assignment(Slot slot, UUID employeeId) {}
+    public record PartialPlan(List<Assignment> assignments, List<Slot> unfilled) {}
 
     private final LocalDate weekStart;
     private final long maxWeeklyMinutes;
@@ -49,6 +50,28 @@ public final class WeeklySchedulePlanner {
     }
 
     public boolean searchExhausted() { return searchExhausted; }
+
+    /** Fast best-effort draft: scarce slots first, then highest score and fairest hours. */
+    public PartialPlan planPartial() {
+        if (maxWeeklyMinutes <= 0 || slots.size() > 700) throw new IllegalArgumentException("Invalid scheduling limits");
+        var ordered = new ArrayList<>(slots);
+        ordered.sort(Comparator.comparingInt((Slot slot) -> slot.eligibleScores().size())
+            .thenComparing(Slot::workDate).thenComparing(Slot::startsAt).thenComparing(Slot::templateId));
+        var unfilled = new ArrayList<Slot>();
+        for (var slot : ordered) {
+            var choices = eligible(slot);
+            if (choices.isEmpty()) {
+                unfilled.add(slot);
+                continue;
+            }
+            var employeeId = choices.getFirst();
+            occupied.computeIfAbsent(employeeId, ignored -> new ArrayList<>())
+                .add(new Existing(employeeId, slot.workDate(), slot.startsAt(), slot.endsAt(), slot.workingMinutes()));
+            minutes.merge(employeeId, (long) slot.workingMinutes(), Long::sum);
+            assignments.add(new Assignment(slot, employeeId));
+        }
+        return new PartialPlan(List.copyOf(assignments), List.copyOf(unfilled));
+    }
 
     private boolean search(Set<Integer> filled) {
         if (filled.size() == slots.size()) return true;

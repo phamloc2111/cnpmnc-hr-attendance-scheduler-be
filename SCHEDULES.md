@@ -36,6 +36,22 @@ Quản trị viên có thể truyền thêm `managerId` để xếp cho một nh
 xếp cho nhóm mình. Response gồm `createdCount`, `items`, các giới hạn phút/tuần
 và `belowMinimumEmployeeCount` để quản lý thấy số người chưa đạt mục tiêu mềm.
 
+## US24 — Tạo bản nháp lịch tuần trong một thao tác
+
+Quản lý bấm **Xếp lịch tuần (tạo nháp)** tại tuần đang xem. Web gửi `POST /api/v1/work-schedules/drafts`
+với `{ "weekStart": "2026-11-16" }`; backend tự lấy toàn bộ mẫu ca có vị trí bắt buộc và bảy ngày
+trong tuần. Thuật toán dùng cùng ràng buộc và điểm ưu tiên của US23, nhưng xếp phần có thể xếp được
+ngay cả khi vài ca thiếu người. Response có `createdCount`, `missingCount`, `shortages`
+(`workDate`, `shiftTemplateId`, `shiftName`, `missingCount`) để quản lý gán tay bằng
+`POST /api/v1/work-schedules/draft-assignments` hoặc nút **Gán vào nháp**. Gọi lại không tạo
+trùng những vị trí đã có lịch; ca đã phân thủ công cũng được tính vào nhu cầu.
+
+Các hàng nháp có `draft=true` và chỉ xuất hiện trong danh sách lịch của quản lý/quản trị. Nhân viên
+không thấy nháp, không thể chấm công theo nháp, và nháp không được tính vào điểm chuyên cần hay
+thống kê ca đã công bố. Lịch cũ được migration V18 giữ nguyên là lịch đã công bố (`draft=false`).
+US24 chưa có thao tác công bố nháp; cần triển khai thao tác này ở câu chuyện nghiệp vụ tiếp theo.
+Giới hạn giờ tuần vẫn dùng `SCHEDULING_MAX_WEEKLY_MINUTES` của US23.
+
 SYNC-18: response phân ca và danh sách lịch bổ sung `requiredPosition` từ mẫu ca để nhân viên xem vị trí trên trang chủ. Trường có thể null cho mẫu ca cũ. Không thay đổi quyền truy cập lịch; nhân viên chỉ đọc lịch của chính mình. Vị trí được tải theo lô cùng trang lịch, không cần quyền đọc danh mục. Không thay đổi schema.
 
 SS-16: https://hcmut-team-f3ubnuof.atlassian.net/browse/SS-16 — Định nghĩa ca làm.
