@@ -1,6 +1,7 @@
 CREATE TABLE shift_passes (
     id UUID PRIMARY KEY,
     schedule_id UUID NOT NULL REFERENCES work_schedules(id) ON DELETE CASCADE,
+    open_schedule_id UUID UNIQUE,
     requester_id UUID NOT NULL,
     claimer_id UUID,
     work_date DATE NOT NULL,
@@ -18,9 +19,8 @@ CREATE TABLE shift_passes (
     version BIGINT NOT NULL DEFAULT 0
 );
 
-CREATE UNIQUE INDEX uq_shift_passes_open_schedule
-    ON shift_passes(schedule_id)
-    WHERE status = 'OPEN';
+CREATE INDEX idx_shift_passes_schedule_status
+    ON shift_passes(schedule_id, status);
 
 CREATE INDEX idx_shift_passes_status_starts
     ON shift_passes(status, starts_at);
