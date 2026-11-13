@@ -48,7 +48,9 @@ trùng những vị trí đã có lịch; ca đã phân thủ công cũng đư�
 
 Các hàng nháp có `draft=true` và chỉ xuất hiện trong danh sách lịch của quản lý/quản trị. Nhân viên
 không thấy nháp, không thể chấm công theo nháp, và nháp không được tính vào điểm chuyên cần hay
-thống kê ca đã công bố. Lịch cũ được migration V18 giữ nguyên là lịch đã công bố (`draft=false`).
+thống kê ca đã công bố. Migration `R__schedule_drafts.sql` bổ sung cột `draft` với mặc định `false`
+để giữ nguyên trạng thái lịch cũ. Migration versioned đã áp dụng trên database dùng chung nhưng
+chưa có trong branch này được Flyway xem là `future`; không sửa checksum hoặc chạy Flyway repair.
 US24 chưa có thao tác công bố nháp; cần triển khai thao tác này ở câu chuyện nghiệp vụ tiếp theo.
 Giới hạn giờ tuần vẫn dùng `SCHEDULING_MAX_WEEKLY_MINUTES` của US23.
 
