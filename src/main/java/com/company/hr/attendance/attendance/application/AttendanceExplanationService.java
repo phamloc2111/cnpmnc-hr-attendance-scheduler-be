@@ -10,6 +10,7 @@ import com.company.hr.attendance.attendance.infrastructure.AttendanceEventReposi
 import com.company.hr.attendance.attendance.infrastructure.AttendanceExplanationRepository;
 import com.company.hr.attendance.attendance.infrastructure.AttendanceExplanationImageRepository;
 import com.company.hr.attendance.attendance.infrastructure.AttendanceRecordRepository;
+import com.company.hr.attendance.audit.AuditApi;
 import com.company.hr.attendance.identity.IdentityApi;
 import com.company.hr.attendance.workschedule.WorkScheduleApi;
 import java.io.IOException;
@@ -17,6 +18,7 @@ import java.time.*;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -34,13 +36,25 @@ public class AttendanceExplanationService {
     private final AttendanceExplanationImageRepository images;
     private final Clock clock;
     private final int graceMinutes;
+    private final AuditApi audit;
+
+    public AttendanceExplanationService(IdentityApi identity,WorkScheduleApi schedules,AttendanceEventRepository events,
+        AttendanceRecordRepository records,AttendanceExplanationRepository explanations,AttendanceExplanationImageRepository images,
+        Clock clock, int graceMinutes){
+        this(identity,schedules,events,records,explanations,images,clock,graceMinutes,null);
+    }
+
+    @Autowired
     public AttendanceExplanationService(IdentityApi identity,WorkScheduleApi schedules,AttendanceEventRepository events,
         AttendanceRecordRepository records,AttendanceExplanationRepository explanations,AttendanceExplanationImageRepository images,
         @org.springframework.beans.factory.annotation.Qualifier("diligenceClock") Clock clock,
-        @Value("${app.attendance.grace-minutes:5}") int graceMinutes){
+        @Value("${app.attendance.grace-minutes:5}") int graceMinutes,
+        AuditApi audit){
         this.identity=identity;this.schedules=schedules;this.events=events;this.records=records;
         this.explanations=explanations;this.images=images;this.clock=clock;this.graceMinutes=graceMinutes;
+        this.audit=audit;
     }
+
     private static final int MAX_IMAGE_BYTES=5*1024*1024;
     private record PreparedImage(String contentType,byte[] bytes) {}
     @Transactional
@@ -117,6 +131,19 @@ public class AttendanceExplanationService {
         var status=request.approved()?Status.APPROVED:Status.REJECTED;var now=clock.instant();
         if(!explanations.decide(id,actorId,now,status,reason.isBlank()?null:reason,request.exemptLatePenalty()))
             throw new AttendanceException(HttpStatus.CONFLICT,"EXPLANATION_ALREADY_REVIEWED","Giải trình đã được xử lý. Hãy tải lại danh sách.");
+        if(audit != null){
+            audit.record(
+                actorId,
+                employee.id(),
+                row.workDate(),
+                "ATTENDANCE",
+                "EXPLANATION_DECIDED",
+                (request.approved() ? "Duyệt" : "Từ chối") + " giải trình " + row.category() + " của " + employee.name() + " ngày " + row.workDate(),
+                "Trạng thái: PENDING, Loại: " + row.category(),
+                String.format("Trạng thái: %s, Miễn phạt trễ: %s, Lý do: %s", status, request.exemptLatePenalty(), reason.isBlank() ? "Không có" : reason),
+                now
+            );
+        }
         return response(explanations.find(id).orElseThrow(),employee.name());
     }
     public AttendanceExplanationImageRepository.Photo photo(UUID actorId,UUID explanationId,UUID imageId){

@@ -1,4 +1,5 @@
 package com.company.hr.attendance.diligence.application;
+import com.company.hr.attendance.audit.AuditApi;
 import com.company.hr.attendance.diligence.domain.DayReview;
 import com.company.hr.attendance.diligence.domain.DayReview.*;
 import com.company.hr.attendance.diligence.api.DiligenceModels.*;
@@ -8,6 +9,7 @@ import com.company.hr.attendance.workschedule.WorkScheduleApi;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.*;
 import java.util.*;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
@@ -16,8 +18,23 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service @Transactional(readOnly=true)
 public class DayReviewService {
-    private final IdentityApi identity;private final WorkScheduleApi schedules;private final com.company.hr.attendance.attendance.AttendanceApi attendance;private final DayReviewRepository reviews;private final Clock clock;private final ObjectMapper mapper;
-    public DayReviewService(IdentityApi identity,WorkScheduleApi schedules,com.company.hr.attendance.attendance.AttendanceApi attendance,DayReviewRepository reviews,@Qualifier("diligenceClock") Clock clock,ObjectMapper mapper){this.identity=identity;this.schedules=schedules;this.attendance=attendance;this.reviews=reviews;this.clock=clock;this.mapper=mapper;}
+    private final IdentityApi identity;
+    private final WorkScheduleApi schedules;
+    private final com.company.hr.attendance.attendance.AttendanceApi attendance;
+    private final DayReviewRepository reviews;
+    private final Clock clock;
+    private final ObjectMapper mapper;
+    private final AuditApi audit;
+
+    public DayReviewService(IdentityApi identity,WorkScheduleApi schedules,com.company.hr.attendance.attendance.AttendanceApi attendance,DayReviewRepository reviews,@Qualifier("diligenceClock") Clock clock,ObjectMapper mapper){
+        this(identity,schedules,attendance,reviews,clock,mapper,null);
+    }
+
+    @Autowired
+    public DayReviewService(IdentityApi identity,WorkScheduleApi schedules,com.company.hr.attendance.attendance.AttendanceApi attendance,DayReviewRepository reviews,@Qualifier("diligenceClock") Clock clock,ObjectMapper mapper,AuditApi audit){
+        this.identity=identity;this.schedules=schedules;this.attendance=attendance;this.reviews=reviews;this.clock=clock;this.mapper=mapper;this.audit=audit;
+    }
+
     public ReviewHistory history(UUID actor,UUID employee,LocalDate date){
         authorize(actor,employee,false);validateDay(employee,date);var records=reviews.history(employee,date);
         var names=identity.names(records.stream().map(DayReviewRepository.Audit::actorId).toList());
@@ -47,6 +64,20 @@ public class DayReviewService {
         var review=new DayReview(employee,date,request.absence(),request.earlyLeaveApproved(),request.missing(),request.note().strip(),old.revision()+1,actor,now);
         if(!reviews.save(review,old.revision()))throw changed();
         try{reviews.audit(review,mapper.writeValueAsString(review));}catch(com.fasterxml.jackson.core.JsonProcessingException error){throw new IllegalStateException("Could not record diligence audit",error);}
+        if(audit != null){
+            var empName = identity.person(employee).name();
+            audit.record(
+                actor,
+                employee,
+                date,
+                "ATTENDANCE",
+                "DILIGENCE_REVIEW_UPDATED",
+                "Cập nhật xác nhận chuyên cần/giờ công của " + empName + " ngày " + date,
+                String.format("Nghỉ: %s, Về sớm hợp lệ: %s, Quên chấm: %s, Ghi chú: %s", old.absence(), old.earlyLeaveApproved(), old.missing(), old.note() == null ? "Trống" : old.note()),
+                String.format("Nghỉ: %s, Về sớm hợp lệ: %s, Quên chấm: %s, Ghi chú: %s", review.absence(), review.earlyLeaveApproved(), review.missing(), review.note()),
+                now
+            );
+        }
         return review;
     }
     private void authorize(UUID actorId,UUID employeeId,boolean lock){
