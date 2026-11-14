@@ -71,4 +71,5 @@ public class WorkSchedule {
     public UUID getPublishedBy() { return publishedBy; }
     public boolean isUnderstaffed() { return Boolean.TRUE.equals(understaffed); }
     public void markUnderstaffed() { this.understaffed = true; }
+    public void reassignEmployee(UUID employeeId) { this.employeeId = employeeId; }
 }
