@@ -1,14 +1,18 @@
 package com.company.hr.attendance.attendance.application;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -19,6 +23,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 
+@ExtendWith(OutputCaptureExtension.class)
 class TimemarkReaderHttpTest {
     private static final String URL = "https://example.test/v1beta/models/test-model:generateContent";
     private final MockMultipartFile image = new MockMultipartFile("image", "timemark.jpg", "image/jpeg",
@@ -71,6 +76,20 @@ class TimemarkReaderHttpTest {
         server.expect(requestTo(URL)).andRespond(withStatus(HttpStatus.FORBIDDEN));
 
         assertFailure("TIMEMARK_AI_AUTH_FAILED", 503, "GEMINI_API_KEY");
+        server.verify();
+    }
+
+    @Test
+    void transportFailureLogsExceptionTypesWithoutSensitiveMessages(CapturedOutput output) {
+        server.expect(requestTo(URL)).andRespond(request -> {
+            throw new RestClientException("secret-request-details",
+                new IllegalStateException("secret-cause-details"));
+        });
+
+        assertFailure("TIMEMARK_AI_FAILED", 502, "Google AI");
+        assertThat(output.getAll()).contains("Timemark Google AI request failed")
+            .contains("org.springframework.web.client.RestClientException -> java.lang.IllegalStateException")
+            .doesNotContain("secret-request-details", "secret-cause-details", "test-key");
         server.verify();
     }
 
