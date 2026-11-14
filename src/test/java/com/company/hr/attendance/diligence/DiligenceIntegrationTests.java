@@ -4,6 +4,8 @@ import com.company.hr.attendance.identity.PostgresTestConfig;
 import com.company.hr.attendance.identity.domain.*;
 import com.company.hr.attendance.identity.infrastructure.*;
 import com.company.hr.attendance.attendance.api.AttendanceModels.EventType;
+import com.company.hr.attendance.attendance.api.AttendanceModels.TimemarkAnalysisResponse;
+import com.company.hr.attendance.attendance.application.TimemarkReader;
 import com.company.hr.attendance.attendance.infrastructure.AttendanceEventRepository;
 import com.company.hr.attendance.workschedule.domain.ShiftTemplate;
 import com.company.hr.attendance.workschedule.infrastructure.ShiftTemplateRepository;
@@ -33,6 +35,7 @@ class DiligenceIntegrationTests {
     @Autowired AccountRepository accounts;@Autowired LoginSessionRepository sessions;@Autowired PasswordEncoder encoder;
     @Autowired ShiftTemplateRepository templates;@Autowired AttendanceEventRepository events;
     @MockitoBean(name="diligenceClock") Clock clock;
+    @MockitoBean TimemarkReader timemarkReader;
     String managerToken,adminToken,employeeToken,otherToken;Account manager,employee,idle,outside;UUID template;
     static final Instant NOW=Instant.parse("2026-12-01T01:00:00Z");
     @BeforeEach void setup()throws Exception{
@@ -141,11 +144,13 @@ class DiligenceIntegrationTests {
         var date=now.atZone(ZoneId.of("Asia/Ho_Chi_Minh")).toLocalDate();var month=YearMonth.from(date).toString();
         var id=shift(employee.getId(),date,now.minusSeconds(600));
         assertThat(detail(managerToken,employee.getId(),month).at("/employee/score").asInt()).isEqualTo(100);
-        mvc.perform(upload(id,"5000").header("Authorization","Bearer "+employeeToken)).andExpect(status().isUnprocessableEntity()).andExpect(jsonPath("$.code").value("GPS_ACCURACY_TOO_LOW"));
+        when(timemarkReader.read(any())).thenReturn(new TimemarkAnalysisResponse(false,null,null,null,null,"Không đọc được ảnh Timemark"));
+        mvc.perform(upload(id).header("Authorization","Bearer "+employeeToken)).andExpect(status().isUnprocessableEntity()).andExpect(jsonPath("$.code").value("TIMEMARK_UNREADABLE"));
         assertThat(detail(managerToken,employee.getId(),month).at("/employee/score").asInt()).isEqualTo(100);
-        mvc.perform(upload(id,"5").header("Authorization","Bearer "+employeeToken)).andExpect(status().isCreated());
+        when(timemarkReader.read(any())).thenAnswer(inv -> new TimemarkAnalysisResponse(true,Instant.now().toString(),10.7726,106.6579,null,null));
+        mvc.perform(upload(id).header("Authorization","Bearer "+employeeToken)).andExpect(status().isCreated());
         assertThat(detail(managerToken,employee.getId(),month).at("/employee/score").asInt()).isEqualTo(95);
-        mvc.perform(upload(id,"5").header("Authorization","Bearer "+employeeToken)).andExpect(status().isConflict());
+        mvc.perform(upload(id).header("Authorization","Bearer "+employeeToken)).andExpect(status().isConflict());
         assertThat(detail(managerToken,employee.getId(),month).at("/employee/checkInCount").asInt()).isEqualTo(1);
     }
     @Test void managerReviewRecalculatesScoreKeepsAuditAndRejectsStaleOrOutOfScopeChanges()throws Exception{
@@ -296,10 +301,9 @@ class DiligenceIntegrationTests {
             .andExpect(status().isCreated()).andExpect(jsonPath("$.status").value("PENDING")).andReturn();
         return UUID.fromString(mapper.readTree(result.getResponse().getContentAsString()).path("id").asText());
     }
-    org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder upload(UUID id,String accuracy){
-        var now=Instant.now().toString();return multipart("/api/v1/attendance/events")
+    org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder upload(UUID id){
+        return multipart("/api/v1/attendance/events")
             .file(new MockMultipartFile("photo","timemark.jpg","image/jpeg",new byte[]{(byte)0xff,(byte)0xd8,(byte)0xff,1}))
-            .param("scheduleId",id.toString()).param("type","CHECK_IN").param("locatedAt",now).param("latitude","10.7726").param("longitude","106.6579")
-            .param("accuracyMeters",accuracy).param("timemarkCapturedAt",now).param("timemarkLatitude","10.7726").param("timemarkLongitude","106.6579");
+            .param("scheduleId",id.toString()).param("type","CHECK_IN");
     }
 }
