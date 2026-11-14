@@ -32,7 +32,7 @@ public class WorkScheduleDirectory implements WorkScheduleApi {
     }
     @Override
     public java.util.Optional<Shift> lock(UUID id) {
-        return schedules.lockById(id).map(this::view);
+        return schedules.lockById(id).filter(schedule -> !schedule.isDraft()).map(this::view);
     }
     @Override
     public Optional<ShiftDetail> findDetail(UUID id) {
@@ -65,7 +65,8 @@ public class WorkScheduleDirectory implements WorkScheduleApi {
         var actor = identity.person(actorId);
         if (actor.locked() || !java.util.Set.of("MANAGER", "ADMIN").contains(actor.role()))
             throw new AccessDeniedException("Management access required");
-        Specification<WorkSchedule> filter = (root, ignored, cb) -> cb.between(root.get("workDate"), from, to);
+        Specification<WorkSchedule> filter = (root, ignored, cb) -> cb.and(
+            cb.between(root.get("workDate"), from, to), cb.isFalse(root.get("draft")));
         if (actor.role().equals("MANAGER")) {
             var ids = identity.managedEmployeeIds(actorId);
             if (employeeId != null && !ids.contains(employeeId)) throw new AccessDeniedException("Employee unavailable");
@@ -78,7 +79,8 @@ public class WorkScheduleDirectory implements WorkScheduleApi {
     public java.util.List<Shift> employeeShifts(java.util.Collection<UUID> employeeIds, LocalDate from, LocalDate to) {
         if (employeeIds.isEmpty()) return java.util.List.of();
         Specification<WorkSchedule> filter = (root, ignored, cb) -> cb.and(
-            root.get("employeeId").in(employeeIds), cb.between(root.get("workDate"), from, to));
+            root.get("employeeId").in(employeeIds), cb.between(root.get("workDate"), from, to),
+            cb.isFalse(root.get("draft")));
         return schedules.findAll(filter, Sort.by("workDate", "startsAt", "id")).stream().map(this::view).toList();
     }
     private Shift view(WorkSchedule schedule) {

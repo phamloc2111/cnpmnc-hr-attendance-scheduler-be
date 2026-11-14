@@ -1,12 +1,18 @@
 package com.company.hr.attendance.workschedule.infrastructure;
 import com.company.hr.attendance.workschedule.domain.WorkSchedule;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.util.Collection;
+import java.util.List;
 import java.util.UUID;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.repository.query.Param;
 import org.springframework.data.jpa.repository.*;
 public interface WorkScheduleRepository extends JpaRepository<WorkSchedule, UUID>, JpaSpecificationExecutor<WorkSchedule> {
     boolean existsByEmployeeIdAndStartsAtLessThanAndEndsAtGreaterThan(UUID employeeId, Instant end, Instant start);
+    List<WorkSchedule> findByEmployeeIdInAndStartsAtLessThanAndEndsAtGreaterThan(
+        Collection<UUID> employeeIds, Instant end, Instant start);
+    List<WorkSchedule> findByEmployeeIdInAndWorkDateBetween(Collection<UUID> employeeIds, LocalDate from, LocalDate to);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select schedule from WorkSchedule schedule where schedule.id = :id")
     java.util.Optional<WorkSchedule> lockById(@Param("id") UUID id);
