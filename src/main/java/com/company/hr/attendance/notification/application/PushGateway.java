@@ -12,4 +12,7 @@ public interface PushGateway {
     default Result sendCustom(UUID employeeId, String token, String title, String body, Map<String, String> data, Instant expiresAt, Instant now) {
         return send(employeeId, token, LocalDate.now(), "CUSTOM", expiresAt, now);
     }
+    default Result sendCustom(UUID userId, String token, String title, String body, String tag, Map<String, String> data, Instant expiresAt, Instant now) {
+        return Result.RETRY;
+    }
 }

@@ -13,6 +13,8 @@ import java.util.List;
 public interface AccountRepository extends JpaRepository<Account, UUID>, JpaSpecificationExecutor<Account> {
     Optional<Account> findByEmail(String email);
     List<Account> findByManagerIdAndRole(UUID managerId, com.company.hr.attendance.identity.domain.Role role);
+    List<Account> findByManagerIdAndRoleAndLockedFalse(UUID managerId, com.company.hr.attendance.identity.domain.Role role);
+    List<Account> findByPositionIdAndRoleAndLockedFalse(UUID positionId, com.company.hr.attendance.identity.domain.Role role);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select a from Account a where a.id = :id")

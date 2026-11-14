@@ -47,27 +47,27 @@ public class FirebasePushGateway implements PushGateway {
 
     @Override
     public Result sendCustom(UUID employeeId, String token, String title, String body, Map<String, String> data, Instant expiresAt, Instant now) {
+        String tag = data != null ? data.getOrDefault("tag", "notification-" + System.currentTimeMillis()) : "notification-" + System.currentTimeMillis();
+        return sendCustom(employeeId, token, title, body, tag, data, expiresAt, now);
+    }
+
+    @Override
+    public Result sendCustom(UUID userId, String token, String title, String body, String tag, Map<String, String> data, Instant expiresAt, Instant now) {
         if (app == null) return Result.RETRY;
         long ttl = Math.max(0, Duration.between(now, expiresAt).getSeconds());
         if (ttl == 0) return Result.RETRY;
         var builder = Message.builder().setToken(token)
-            .putData("employeeId", employeeId.toString())
-            .putData("title", title)
-            .putData("body", body)
-            .putData("expiresAt", expiresAt.toString())
-            .putData("tag", data != null ? data.getOrDefault("tag", "notification-" + System.currentTimeMillis()) : "notification-" + System.currentTimeMillis());
+            .putData("employeeId", userId.toString()).putData("expiresAt", expiresAt.toString())
+            .putData("title", title).putData("body", body).putData("tag", tag);
         if (data != null) {
-            data.forEach(builder::putData);
+            data.forEach((k, v) -> { if (k != null && v != null) builder.putData(k, v); });
         }
-        builder.setWebpushConfig(WebpushConfig.builder().putHeader("TTL", Long.toString(ttl)).putHeader("Urgency", "normal").build());
-        try {
-            FirebaseMessaging.getInstance(app).send(builder.build());
-            return Result.SENT;
-        } catch (FirebaseMessagingException error) {
-            log.warn("FCM rejected a delivery: {}", error.getMessagingErrorCode());
+        var message = builder.setWebpushConfig(WebpushConfig.builder().putHeader("TTL", Long.toString(ttl)).putHeader("Urgency", "high").build()).build();
+        try { FirebaseMessaging.getInstance(app).send(message); return Result.SENT; }
+        catch (FirebaseMessagingException error) {
+            log.warn("FCM custom delivery rejected: {}", error.getMessagingErrorCode());
             return error.getMessagingErrorCode() == MessagingErrorCode.UNREGISTERED ? Result.INVALID_TOKEN : Result.RETRY;
         }
     }
-
     @PreDestroy void close() { if (app != null) app.delete(); }
 }
