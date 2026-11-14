@@ -8,9 +8,12 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.time.Duration;
+import java.util.ArrayList;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 class WeeklySchedulePlannerTest {
     private static final LocalDate WEEK = LocalDate.of(2026, 11, 16);
@@ -60,6 +63,37 @@ class WeeklySchedulePlannerTest {
         var planner = new WeeklySchedulePlanner(WEEK, 480,
             List.of(slot(0, 8, 4, Map.of(anna, 90)), slot(0, 8, 4, Map.of(anna, 90))), List.of());
         assertThat(planner.plan()).isEmpty();
+    }
+
+    @Test
+    void partialDraftKeepsAvailableAssignmentsWhenAnotherSeatCannotBeFilled() {
+        var common = slot(0, 8, 4, Map.of(anna, 100, binh, 80));
+        var scarce = slot(1, 8, 4, Map.of(anna, 100));
+        var impossible = slot(2, 8, 4, Map.of());
+        var result = new WeeklySchedulePlanner(WEEK, 480,
+            List.of(common, scarce, impossible), List.of()).planPartial();
+        assertThat(result.assignments()).hasSize(2);
+        assertThat(result.assignments()).filteredOn(a -> a.slot() == scarce)
+            .extracting(WeeklySchedulePlanner.Assignment::employeeId).containsExactly(anna);
+        assertThat(result.unfilled()).containsExactly(impossible);
+    }
+
+    @Test
+    void fiftyEmployeesCanProduceAWeekDraftWithinTenSeconds() {
+        var employees = new ArrayList<UUID>();
+        for (int i = 0; i < 50; i++) employees.add(UUID.randomUUID());
+        var scores = new java.util.HashMap<UUID, Integer>();
+        for (int i = 0; i < employees.size(); i++) scores.put(employees.get(i), 100 - i);
+        var slots = new ArrayList<Slot>();
+        for (int day = 0; day < 7; day++) {
+            for (int hour : List.of(8, 12, 16, 20)) {
+                for (int seat = 0; seat < 10; seat++) slots.add(slot(day, hour, 4, scores));
+            }
+        }
+        var result = assertTimeoutPreemptively(Duration.ofSeconds(10), () ->
+            new WeeklySchedulePlanner(WEEK, 2400, slots, List.of()).planPartial());
+        assertThat(result.assignments()).hasSize(280);
+        assertThat(result.unfilled()).isEmpty();
     }
 
     private List<WeeklySchedulePlanner.Assignment> plan(List<Slot> slots, List<Existing> existing, long max) {
