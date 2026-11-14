@@ -30,6 +30,17 @@ public final class ScheduleModels {
         }
     }
     public record AssignShift(@NotNull UUID employeeId, @NotNull UUID shiftTemplateId, @NotNull LocalDate workDate) {}
+    public record DraftSlot(@NotNull LocalDate workDate, @NotNull UUID shiftTemplateId) {}
+    public record GenerateDraft(@NotNull LocalDate weekStart, UUID managerId,
+        List<@NotNull @jakarta.validation.Valid DraftSlot> slots) {
+        public GenerateDraft(LocalDate weekStart, UUID managerId) { this(weekStart, managerId, null); }
+    }
+    public record DraftShortage(LocalDate workDate, UUID shiftTemplateId, String shiftName, int missingCount) {}
+    public record DraftGenerationResponse(LocalDate weekStart, int createdCount, int missingCount,
+        List<DraftShortage> shortages, List<ScheduleResponse> items) {}
+    public record DraftOvertime(UUID employeeId, String employeeName, long weeklyMinutes, long exceededMinutes) {}
+    public record DraftWarningsResponse(LocalDate weekStart, boolean draftExists, long maxWeeklyMinutes,
+        int missingCount, List<DraftShortage> shortages, List<DraftOvertime> overtime) {}
     public record ShiftResponse(UUID id, String name, LocalTime startTime, LocalTime endTime,
                                 int breakMinutes, int workingMinutes, boolean overnight,
                                 int requiredHeadcount, String requiredPosition, UUID requiredPositionId) {
@@ -41,12 +52,12 @@ public final class ScheduleModels {
     }
     public record ScheduleResponse(UUID id, UUID employeeId, String employeeName, UUID shiftTemplateId,
         LocalDate workDate, String shiftName, Instant startsAt, Instant endsAt, int breakMinutes,
-        long workingMinutes, String timezone, String requiredPosition) {
+        long workingMinutes, String timezone, String requiredPosition, boolean draft) {
         public static ScheduleResponse from(WorkSchedule schedule, String name, String requiredPosition) {
             return new ScheduleResponse(schedule.getId(), schedule.getEmployeeId(), name, schedule.getShiftTemplateId(),
                 schedule.getWorkDate(), schedule.getShiftName(), schedule.getStartsAt(), schedule.getEndsAt(),
                 schedule.getBreakMinutes(), Duration.between(schedule.getStartsAt(), schedule.getEndsAt()).toMinutes()
-                    - schedule.getBreakMinutes(), schedule.getTimezone(), requiredPosition);
+                    - schedule.getBreakMinutes(), schedule.getTimezone(), requiredPosition, schedule.isDraft());
         }
     }
     public record PageResponse<T>(List<T> items, int page, int size, long totalElements, int totalPages) {

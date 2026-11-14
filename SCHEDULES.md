@@ -1,5 +1,66 @@
 # Ca làm và lịch làm việc
 
+## US23 — Xếp lịch tự động theo ràng buộc
+
+US23 là thuật toán của thao tác **Xếp lịch tự động**; thao tác này luôn tạo **bản nháp**
+theo US24, không còn endpoint tự động công bố lịch `/work-schedules/generate`.
+Một mẫu ca nhân viên đã đăng ký được hiểu là rảnh vào **mọi ngày** của tuần đó;
+nhân viên không đăng ký mẫu ca sẽ không được xếp. Thuật toán chọn người đúng vị trí
+hoặc có kỹ năng trùng tên vị trí, không trùng giờ với lịch hiện có (kể cả ca qua đêm),
+không vượt trần phút làm việc của tuần tính theo ngày bắt đầu ca. Nhu cầu của
+mỗi mẫu ca/ngày là `requiredHeadcount`; lịch hiện có của nhân viên thuộc nhóm được
+tính vào nhu cầu. Thiếu người vẫn giữ phần đã xếp và trả cảnh báo theo US35.
+Thuật toán tự động bỏ qua mẫu ca gắn với vị trí đã ngừng sử dụng và không tính chúng là ca thiếu người.
+
+Trong các phương án hợp lệ, thuật toán thử người điểm ưu tiên cao trước. Bằng
+điểm thì người có ít phút đã xếp trong tuần được chọn trước; nếu vẫn bằng nhau,
+ưu tiên chuỗi ngày làm liên tiếp ngắn hơn. Hai request xếp lịch cho cùng nhóm được tuần tự hóa bằng khóa hàng
+quản lý và nhân viên, dùng cùng khóa với phân ca thủ công.
+
+Giờ tối đa/tối thiểu chưa được chốt trong nghiệp vụ. Cấu hình
+`SCHEDULING_MAX_WEEKLY_MINUTES` bắt buộc để xếp lịch (ví dụ 2400 cho 40 giờ),
+`SCHEDULING_MIN_WEEKLY_MINUTES` mặc định 0 và chỉ là mục tiêu mềm, không ép lịch
+sai đăng ký hoặc vượt giờ. Nếu trần chưa cấu hình, trả
+`503 SCHEDULING_POLICY_NOT_CONFIGURED` và không tạo lịch. Không chỉnh `.env` thật
+hoặc dữ liệu đã triển khai chỉ để chạy test.
+
+Ví dụ request:
+
+```json
+{"weekStart":"2026-11-16"}
+```
+
+Quản trị viên có thể truyền thêm `managerId` để xếp cho một nhóm; quản lý chỉ
+xếp cho nhóm mình.
+
+## US24 — Tạo bản nháp lịch tuần trong một thao tác
+
+Quản lý bấm **Xếp lịch tự động** tại tuần đang xem. Web gửi `POST /api/v1/work-schedules/drafts`
+với `{ "weekStart": "2026-11-16" }`; backend tự lấy toàn bộ mẫu ca có vị trí bắt buộc và bảy ngày
+trong tuần. Thuật toán dùng cùng ràng buộc và điểm ưu tiên của US23, nhưng xếp phần có thể xếp được
+ngay cả khi vài ca thiếu người. Response có `createdCount`, `missingCount`, `shortages`
+(`workDate`, `shiftTemplateId`, `shiftName`, `missingCount`) để quản lý gán tay bằng
+`POST /api/v1/work-schedules/draft-assignments` hoặc nút **Gán vào nháp**. Gọi lại không tạo
+trùng những vị trí đã có lịch; ca đã phân thủ công cũng được tính vào nhu cầu.
+
+Các hàng nháp có `draft=true` và chỉ xuất hiện trong danh sách lịch của quản lý/quản trị. Nhân viên
+không thấy nháp, không thể chấm công theo nháp, và nháp không được tính vào điểm chuyên cần hay
+thống kê ca đã công bố. Migration `R__schedule_drafts.sql` bổ sung cột `draft` với mặc định `false`
+để giữ nguyên trạng thái lịch cũ. Migration versioned đã áp dụng trên database dùng chung nhưng
+chưa có trong branch này được Flyway xem là `future`; không sửa checksum hoặc chạy Flyway repair.
+US24 chưa có thao tác công bố nháp; cần triển khai thao tác này ở câu chuyện nghiệp vụ tiếp theo.
+Giới hạn giờ tuần vẫn dùng `SCHEDULING_MAX_WEEKLY_MINUTES` của US23.
+
+## US35 — Cảnh báo kèm bản nháp lịch
+
+`GET /api/v1/work-schedules/draft-warnings?weekStart=2026-11-16` chỉ cho quản lý/quản trị
+và chỉ trả dữ liệu nhóm được phép xem. Lần tạo nháp lưu dấu mốc tuần, kể cả khi chưa xếp được ai.
+API tính lại `shortages` và `missingCount` từ số ca đã lưu so với `requiredHeadcount`, cùng
+`overtime` từ tổng phút làm việc trong tuần vượt `SCHEDULING_MAX_WEEKLY_MINUTES`. Vì vậy cảnh báo
+vẫn hiện sau khi tải lại trang và cập nhật sau khi gán/hủy ca. Thuật toán tự động không xếp vượt
+trần; cảnh báo vượt giờ giúp phát hiện ca được phân thủ công hoặc lịch có sẵn. Nhân viên không
+được xem cảnh báo nháp.
+
 SYNC-18: response phân ca và danh sách lịch bổ sung `requiredPosition` từ mẫu ca để nhân viên xem vị trí trên trang chủ. Trường có thể null cho mẫu ca cũ. Không thay đổi quyền truy cập lịch; nhân viên chỉ đọc lịch của chính mình. Vị trí được tải theo lô cùng trang lịch, không cần quyền đọc danh mục. Không thay đổi schema.
 
 SS-16: https://hcmut-team-f3ubnuof.atlassian.net/browse/SS-16 — Định nghĩa ca làm.

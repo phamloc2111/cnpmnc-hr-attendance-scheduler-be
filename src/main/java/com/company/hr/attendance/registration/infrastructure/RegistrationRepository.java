@@ -17,6 +17,15 @@ public class RegistrationRepository {
         return jdbc.query("SELECT shift_template_id FROM shift_registrations WHERE employee_id=? AND week_start=? ORDER BY shift_template_id",
             (row, index) -> row.getObject(1, UUID.class), employeeId, week);
     }
+    public Map<UUID, Set<UUID>> selections(LocalDate week, Collection<UUID> employeeIds) {
+        if (employeeIds.isEmpty()) return Map.of();
+        var result = new HashMap<UUID, Set<UUID>>();
+        named.query("SELECT employee_id,shift_template_id FROM shift_registrations WHERE week_start=:week AND employee_id IN (:ids)",
+            Map.of("week", week, "ids", employeeIds), (org.springframework.jdbc.core.RowCallbackHandler) row ->
+                result.computeIfAbsent(row.getObject("employee_id", UUID.class), ignored -> new HashSet<>())
+                    .add(row.getObject("shift_template_id", UUID.class)));
+        return result;
+    }
     public void replace(UUID employeeId, LocalDate week, Collection<UUID> ids) {
         jdbc.update("DELETE FROM shift_registrations WHERE employee_id=? AND week_start=?", employeeId, week);
         for (var id : ids) jdbc.update("INSERT INTO shift_registrations(id,employee_id,week_start,shift_template_id) VALUES (?,?,?,?)",
