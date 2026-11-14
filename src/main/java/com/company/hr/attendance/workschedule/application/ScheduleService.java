@@ -1,6 +1,7 @@
 package com.company.hr.attendance.workschedule.application;
 
 import com.company.hr.attendance.attendance.AttendanceApi;
+import com.company.hr.attendance.audit.AuditApi;
 import com.company.hr.attendance.identity.IdentityApi;
 import com.company.hr.attendance.organization.PositionsApi;
 import com.company.hr.attendance.workschedule.api.ScheduleModels.*;
@@ -9,6 +10,7 @@ import com.company.hr.attendance.workschedule.infrastructure.*;
 import java.time.*;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.*;
 import org.springframework.data.jpa.domain.Specification;
@@ -28,16 +30,38 @@ public class ScheduleService {
     private final PositionsApi positions;
     private final AttendanceApi attendance;
     private final org.springframework.context.ApplicationEventPublisher events;
+    private final AuditApi audit;
 
+    public ScheduleService(IdentityApi identity, ShiftTemplateRepository shifts, WorkScheduleRepository schedules,
+                           ScheduleDraftWeekRepository draftWeeks,
+                           String timezone, PositionsApi positions, AttendanceApi attendance) {
+        this(identity, shifts, schedules, draftWeeks, timezone, positions, attendance, null, null);
+    }
+
+    public ScheduleService(IdentityApi identity, ShiftTemplateRepository shifts, WorkScheduleRepository schedules,
+                           ScheduleDraftWeekRepository draftWeeks,
+                           String timezone, PositionsApi positions, AttendanceApi attendance, AuditApi audit) {
+        this(identity, shifts, schedules, draftWeeks, timezone, positions, attendance, null, audit);
+    }
+
+    public ScheduleService(IdentityApi identity, ShiftTemplateRepository shifts, WorkScheduleRepository schedules,
+                           ScheduleDraftWeekRepository draftWeeks,
+                           String timezone, PositionsApi positions, AttendanceApi attendance,
+                           org.springframework.context.ApplicationEventPublisher events) {
+        this(identity, shifts, schedules, draftWeeks, timezone, positions, attendance, events, null);
+    }
+
+    @Autowired
     public ScheduleService(IdentityApi identity, ShiftTemplateRepository shifts, WorkScheduleRepository schedules,
                            ScheduleDraftWeekRepository draftWeeks,
                            @Value("${app.timezone:Asia/Ho_Chi_Minh}") String timezone, PositionsApi positions,
                            AttendanceApi attendance,
-                           org.springframework.context.ApplicationEventPublisher events) {
+                           org.springframework.context.ApplicationEventPublisher events,
+                           AuditApi audit) {
         this.identity = identity; this.shifts = shifts; this.schedules = schedules; this.draftWeeks = draftWeeks;
         this.zone = ZoneId.of(timezone);
         this.positions = positions; this.attendance = attendance;
-        this.events = events;
+        this.events = events; this.audit = audit;
     }
 
     public PageResponse<ShiftResponse> shifts(UUID actorId, int page, int size) {
@@ -117,7 +141,7 @@ public class ScheduleService {
             throw new ScheduleException(CONFLICT, "SCHEDULE_OVERLAP", "Nhân viên đã có ca trùng giờ, kể cả ca từ ngày trước.");
         }
         var saved = schedules.saveAndFlush(schedule);
-        if (draft) {
+        if (draft && draftWeeks != null) {
             UUID managerId = actor.role().equals("MANAGER") ? actorId : employee.managerId();
             if (managerId != null) {
                 var weekStart = request.workDate().with(java.time.temporal.TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
@@ -125,6 +149,19 @@ public class ScheduleService {
             }
         } else if (events != null) {
             events.publishEvent(new SchedulePublishedEvent(Set.of(employee.id()), request.workDate(), request.workDate()));
+        }
+        if (audit != null) {
+            audit.record(
+                actorId,
+                employee.id(),
+                request.workDate(),
+                "SCHEDULE",
+                "SCHEDULE_ASSIGNED",
+                "Phân ca " + shift.getName() + " cho " + employee.name() + " ngày " + request.workDate(),
+                null,
+                "Ca: " + shift.getName() + " (" + shift.getStartTime() + " - " + shift.getEndTime() + "), Ngày: " + request.workDate(),
+                Instant.now()
+            );
         }
         return ScheduleResponse.from(saved, employee.name(), shift.getRequiredPosition());
     }
@@ -215,6 +252,19 @@ public class ScheduleService {
             "Ca đã có lượt điểm danh; không thể hủy.");
         schedules.delete(schedule);
         schedules.flush();
+        if (audit != null) {
+            audit.record(
+                actorId,
+                employee.id(),
+                schedule.getWorkDate(),
+                "SCHEDULE",
+                "SCHEDULE_CANCELLED",
+                "Hủy ca " + schedule.getShiftName() + " của " + employee.name() + " ngày " + schedule.getWorkDate(),
+                "Ca: " + schedule.getShiftName() + ", Ngày: " + schedule.getWorkDate(),
+                "Đã hủy ca làm việc",
+                Instant.now()
+            );
+        }
     }
 
     private IdentityApi.Person active(UUID id) {
