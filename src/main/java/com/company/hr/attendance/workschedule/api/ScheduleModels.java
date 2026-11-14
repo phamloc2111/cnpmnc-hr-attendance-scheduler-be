@@ -30,7 +30,11 @@ public final class ScheduleModels {
         }
     }
     public record AssignShift(@NotNull UUID employeeId, @NotNull UUID shiftTemplateId, @NotNull LocalDate workDate) {}
-    public record GenerateDraft(@NotNull LocalDate weekStart, UUID managerId) {}
+    public record DraftSlot(@NotNull LocalDate workDate, @NotNull UUID shiftTemplateId) {}
+    public record GenerateDraft(@NotNull LocalDate weekStart, UUID managerId,
+        List<@NotNull @jakarta.validation.Valid DraftSlot> slots) {
+        public GenerateDraft(LocalDate weekStart, UUID managerId) { this(weekStart, managerId, null); }
+    }
     public record DraftShortage(LocalDate workDate, UUID shiftTemplateId, String shiftName, int missingCount) {}
     public record DraftGenerationResponse(LocalDate weekStart, int createdCount, int missingCount,
         List<DraftShortage> shortages, List<ScheduleResponse> items) {}

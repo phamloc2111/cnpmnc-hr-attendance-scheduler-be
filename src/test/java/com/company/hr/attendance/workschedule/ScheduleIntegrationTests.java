@@ -98,7 +98,7 @@ class ScheduleIntegrationTests {
         mvc.perform(get("/api/v1/work-schedules/draft-warnings")
             .header("Authorization", "Bearer " + managerToken).param("weekStart", "2026-11-02"))
             .andExpect(status().isOk()).andExpect(jsonPath("$.draftExists").value(true))
-            .andExpect(jsonPath("$.missingCount").value(6));
+            .andExpect(jsonPath("$.missingCount").value(0));
     }
 
     @Test void oneClickDraftReportsShortagesWhenNobodyRegistered() throws Exception {
@@ -122,6 +122,35 @@ class ScheduleIntegrationTests {
             .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
             .content("{}"))
             .andExpect(status().isMethodNotAllowed());
+    }
+
+    @Test void selectedDraftOnlyPlansChosenDatesAndPersistsTheirWarnings() throws Exception {
+        var template = shift("07:00", "11:00", 0);
+        var id = template.get("id").asText();
+        var slots = List.of(Map.of("workDate", "2026-11-17", "shiftTemplateId", id),
+            Map.of("workDate", "2026-11-19", "shiftTemplateId", id));
+        mvc.perform(post("/api/v1/work-schedules/drafts")
+            .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
+            .content(mapper.writeValueAsString(Map.of("weekStart", "2026-11-16", "slots", slots))))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.missingCount").value(2))
+            .andExpect(jsonPath("$.shortages[0].workDate").value("2026-11-17"));
+        mvc.perform(get("/api/v1/work-schedules/draft-warnings")
+            .header("Authorization", "Bearer " + managerToken).param("weekStart", "2026-11-16"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.missingCount").value(2))
+            .andExpect(jsonPath("$.shortages.length()").value(2));
+        mvc.perform(post("/api/v1/work-schedules/drafts")
+            .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
+            .content(mapper.writeValueAsString(Map.of("weekStart", "2026-11-16", "slots", List.of(slots.get(1))))))
+            .andExpect(status().isOk());
+        mvc.perform(get("/api/v1/work-schedules/draft-warnings")
+            .header("Authorization", "Bearer " + managerToken).param("weekStart", "2026-11-16"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.missingCount").value(1))
+            .andExpect(jsonPath("$.shortages.length()").value(1))
+            .andExpect(jsonPath("$.shortages[0].workDate").value("2026-11-19"));
+        mvc.perform(post("/api/v1/work-schedules/drafts")
+            .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
+            .content(mapper.writeValueAsString(Map.of("weekStart", "2026-11-16", "slots", List.of()))))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_GENERATION_REQUEST"));
     }
 
     @Test void oneClickDraftSkipsTemplatesWhosePositionWasDeactivated() throws Exception {

@@ -5,9 +5,11 @@ import com.company.hr.attendance.organization.PositionsApi;
 import com.company.hr.attendance.workschedule.api.ScheduleModels.DraftOvertime;
 import com.company.hr.attendance.workschedule.api.ScheduleModels.DraftShortage;
 import com.company.hr.attendance.workschedule.api.ScheduleModels.DraftWarningsResponse;
+import com.company.hr.attendance.workschedule.api.ScheduleModels.DraftSlot;
 import com.company.hr.attendance.workschedule.domain.ShiftTemplate;
 import com.company.hr.attendance.workschedule.domain.WorkSchedule;
 import com.company.hr.attendance.workschedule.infrastructure.ScheduleDraftWeekRepository;
+import com.company.hr.attendance.workschedule.infrastructure.ScheduleDraftSlotRepository;
 import com.company.hr.attendance.workschedule.infrastructure.ShiftTemplateRepository;
 import com.company.hr.attendance.workschedule.infrastructure.WorkScheduleRepository;
 import java.time.DayOfWeek;
@@ -33,16 +35,18 @@ public class ScheduleDraftWarningsService {
     private final ShiftTemplateRepository templates;
     private final WorkScheduleRepository schedules;
     private final ScheduleDraftWeekRepository draftWeeks;
+    private final ScheduleDraftSlotRepository draftSlots;
     private final long maxWeeklyMinutes;
 
     public ScheduleDraftWarningsService(IdentityApi identity, PositionsApi positions, ShiftTemplateRepository templates,
-        WorkScheduleRepository schedules, ScheduleDraftWeekRepository draftWeeks,
+        WorkScheduleRepository schedules, ScheduleDraftWeekRepository draftWeeks, ScheduleDraftSlotRepository draftSlots,
         @Value("${app.scheduling.max-weekly-minutes:0}") long maxWeeklyMinutes) {
         this.identity = identity;
         this.positions = positions;
         this.templates = templates;
         this.schedules = schedules;
         this.draftWeeks = draftWeeks;
+        this.draftSlots = draftSlots;
         this.maxWeeklyMinutes = maxWeeklyMinutes;
     }
 
@@ -81,13 +85,15 @@ public class ScheduleDraftWarningsService {
                 && activePositions.contains(template.getRequiredPositionId())
                 && template.getRequiredHeadcount() > 0)
             .sorted(Comparator.comparing(ShiftTemplate::getName).thenComparing(ShiftTemplate::getId)).toList();
-        for (int day = 0; day < 7; day++) {
-            var date = weekStart.plusDays(day);
-            for (var template : selected) {
-                int missing = Math.max(0, template.getRequiredHeadcount()
-                    - filled.getOrDefault(new ShiftDate(template.getId(), date), 0));
-                if (missing > 0) shortages.add(new DraftShortage(date, template.getId(), template.getName(), missing));
-            }
+        var selectedById = new HashMap<UUID, ShiftTemplate>();
+        selected.forEach(template -> selectedById.put(template.getId(), template));
+        var savedSlots = draftSlots.find(managerId, weekStart);
+        for (var slot : savedSlots) {
+            var template = selectedById.get(slot.shiftTemplateId());
+            if (template == null) continue;
+            int missing = Math.max(0, template.getRequiredHeadcount()
+                - filled.getOrDefault(new ShiftDate(template.getId(), slot.workDate()), 0));
+            if (missing > 0) shortages.add(new DraftShortage(slot.workDate(), template.getId(), template.getName(), missing));
         }
         var names = identity.names(minutes.keySet());
         var overtime = maxWeeklyMinutes <= 0 ? List.<DraftOvertime>of() : minutes.entrySet().stream()

@@ -5,12 +5,14 @@ import com.company.hr.attendance.organization.PositionsApi;
 import com.company.hr.attendance.priority.PriorityService;
 import com.company.hr.attendance.registration.infrastructure.RegistrationRepository;
 import com.company.hr.attendance.workschedule.api.ScheduleModels.GenerateDraft;
+import com.company.hr.attendance.workschedule.api.ScheduleModels.DraftSlot;
 import com.company.hr.attendance.workschedule.application.ScheduleException;
 import com.company.hr.attendance.workschedule.application.ScheduleGenerationService;
 import com.company.hr.attendance.workschedule.domain.ShiftTemplate;
 import com.company.hr.attendance.workschedule.domain.WorkSchedule;
 import com.company.hr.attendance.workschedule.infrastructure.ShiftTemplateRepository;
 import com.company.hr.attendance.workschedule.infrastructure.ScheduleDraftWeekRepository;
+import com.company.hr.attendance.workschedule.infrastructure.ScheduleDraftSlotRepository;
 import com.company.hr.attendance.workschedule.infrastructure.WorkScheduleRepository;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -35,6 +37,7 @@ class ScheduleGenerationServiceTest {
     private final ShiftTemplateRepository templates = mock(ShiftTemplateRepository.class);
     private final WorkScheduleRepository schedules = mock(WorkScheduleRepository.class);
     private final ScheduleDraftWeekRepository draftWeeks = mock(ScheduleDraftWeekRepository.class);
+    private final ScheduleDraftSlotRepository draftSlots = mock(ScheduleDraftSlotRepository.class);
     private final RegistrationRepository registrations = mock(RegistrationRepository.class);
     private final PriorityService priority = mock(PriorityService.class);
     private final UUID manager = UUID.randomUUID();
@@ -47,7 +50,7 @@ class ScheduleGenerationServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new ScheduleGenerationService(identity, positions, templates, schedules, draftWeeks, registrations, priority,
+        service = new ScheduleGenerationService(identity, positions, templates, schedules, draftWeeks, draftSlots, registrations, priority,
             "Asia/Ho_Chi_Minh", 480, 0);
         when(identity.person(manager)).thenReturn(new IdentityApi.Person(manager, "Manager", "MANAGER", false, null));
         when(identity.lockPerson(manager)).thenReturn(new IdentityApi.Person(manager, "Manager", "MANAGER", false, null));
@@ -109,7 +112,7 @@ class ScheduleGenerationServiceTest {
 
     @Test
     void unconfiguredWeeklyMaximumPreventsGeneration() {
-        service = new ScheduleGenerationService(identity, positions, templates, schedules, draftWeeks, registrations, priority,
+        service = new ScheduleGenerationService(identity, positions, templates, schedules, draftWeeks, draftSlots, registrations, priority,
             "Asia/Ho_Chi_Minh", 0, 0);
         assertThatThrownBy(() -> service.generateDraft(manager, request()))
             .isInstanceOfSatisfying(ScheduleException.class, error ->
@@ -119,7 +122,7 @@ class ScheduleGenerationServiceTest {
 
     @Test
     void weeklyMinimumNeverForcesInvalidAssignments() {
-        service = new ScheduleGenerationService(identity, positions, templates, schedules, draftWeeks, registrations, priority,
+        service = new ScheduleGenerationService(identity, positions, templates, schedules, draftWeeks, draftSlots, registrations, priority,
             "Asia/Ho_Chi_Minh", 480, 300);
 
         var result = service.generateDraft(manager, request());
@@ -163,6 +166,43 @@ class ScheduleGenerationServiceTest {
         assertThat(result.missingCount()).isEqualTo(7);
         verify(schedules, never()).saveAllAndFlush(any());
         verify(draftWeeks).createIfAbsent(any(), eq(manager), eq(WEEK));
+    }
+
+    @Test
+    void onlySelectedDayShiftIsPlannedAndSavedForWarnings() {
+        var slot = new DraftSlot(WEEK.plusDays(2), shift.getId());
+        when(registrations.selections(eq(WEEK), any())).thenReturn(Map.of());
+
+        var result = service.generateDraft(manager, new GenerateDraft(WEEK, null, List.of(slot)));
+
+        assertThat(result.createdCount()).isZero();
+        assertThat(result.missingCount()).isEqualTo(1);
+        assertThat(result.shortages()).extracting(item -> item.workDate()).containsExactly(WEEK.plusDays(2));
+        verify(draftSlots).replace(manager, WEEK, List.of(slot));
+    }
+
+    @Test
+    void duplicateOrOutOfWeekSlotsAreRejectedBeforeSaving() {
+        var slot = new DraftSlot(WEEK, shift.getId());
+        for (var slots : List.of(List.of(slot, slot), List.of(new DraftSlot(WEEK.plusDays(7), shift.getId())))) {
+            assertThatThrownBy(() -> service.generateDraft(manager, new GenerateDraft(WEEK, null, slots)))
+                .isInstanceOfSatisfying(ScheduleException.class,
+                    error -> assertThat(error.getCode()).isEqualTo("INVALID_GENERATION_REQUEST"));
+        }
+        verifyNoInteractions(draftSlots);
+        verify(schedules, never()).saveAllAndFlush(any());
+    }
+
+    @Test
+    void selectedTemplateWithInactivePositionIsRejectedBeforeSaving() {
+        when(positions.activeIds(any())).thenReturn(Set.of());
+        var slot = new DraftSlot(WEEK, shift.getId());
+
+        assertThatThrownBy(() -> service.generateDraft(manager, new GenerateDraft(WEEK, null, List.of(slot))))
+            .isInstanceOfSatisfying(ScheduleException.class,
+                error -> assertThat(error.getCode()).isEqualTo("SHIFT_NOT_SCHEDULABLE"));
+        verifyNoInteractions(draftSlots);
+        verify(schedules, never()).saveAllAndFlush(any());
     }
 
     private GenerateDraft request() {
