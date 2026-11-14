@@ -27,14 +27,17 @@ public class ScheduleService {
     private final ZoneId zone;
     private final PositionsApi positions;
     private final AttendanceApi attendance;
+    private final org.springframework.context.ApplicationEventPublisher events;
 
     public ScheduleService(IdentityApi identity, ShiftTemplateRepository shifts, WorkScheduleRepository schedules,
                            ScheduleDraftWeekRepository draftWeeks,
                            @Value("${app.timezone:Asia/Ho_Chi_Minh}") String timezone, PositionsApi positions,
-                           AttendanceApi attendance) {
+                           AttendanceApi attendance,
+                           org.springframework.context.ApplicationEventPublisher events) {
         this.identity = identity; this.shifts = shifts; this.schedules = schedules; this.draftWeeks = draftWeeks;
         this.zone = ZoneId.of(timezone);
         this.positions = positions; this.attendance = attendance;
+        this.events = events;
     }
 
     public PageResponse<ShiftResponse> shifts(UUID actorId, int page, int size) {
@@ -120,6 +123,8 @@ public class ScheduleService {
                 var weekStart = request.workDate().with(java.time.temporal.TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
                 draftWeeks.createIfAbsent(UUID.randomUUID(), managerId, weekStart);
             }
+        } else if (events != null) {
+            events.publishEvent(new SchedulePublishedEvent(Set.of(employee.id()), request.workDate(), request.workDate()));
         }
         return ScheduleResponse.from(saved, employee.name(), shift.getRequiredPosition());
     }
@@ -192,6 +197,10 @@ public class ScheduleService {
             count++;
         }
         schedules.saveAllAndFlush(list);
+        if (count > 0 && events != null) {
+            java.util.Set<UUID> employeeIds = list.stream().map(WorkSchedule::getEmployeeId).collect(java.util.stream.Collectors.toSet());
+            events.publishEvent(new SchedulePublishedEvent(employeeIds, request.from(), request.to()));
+        }
         return new PublishScheduleResponse(count, request.from(), request.to(), now);
     }
 

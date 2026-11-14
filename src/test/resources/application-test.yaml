@@ -14,6 +14,8 @@ spring:
 app:
   notifications:
     enabled: false
+    email-enabled: false
+    shift-reminder-poll-enabled: false
   auth:
     jwt-secret: test-only-signing-secret-at-least-32-bytes-long
   bootstrap:
