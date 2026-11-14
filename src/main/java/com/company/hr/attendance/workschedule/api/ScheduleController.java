@@ -2,6 +2,8 @@ package com.company.hr.attendance.workschedule.api;
 
 import com.company.hr.attendance.workschedule.api.ScheduleModels.*;
 import com.company.hr.attendance.workschedule.application.ScheduleService;
+import com.company.hr.attendance.workschedule.application.ScheduleGenerationService;
+import com.company.hr.attendance.workschedule.application.ScheduleDraftWarningsService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import java.net.URI;
@@ -20,7 +22,12 @@ import org.springframework.web.bind.annotation.*;
 @Validated
 public class ScheduleController {
     private final ScheduleService service;
-    public ScheduleController(ScheduleService service) { this.service = service; }
+    private final ScheduleGenerationService generation;
+    private final ScheduleDraftWarningsService draftWarnings;
+    public ScheduleController(ScheduleService service, ScheduleGenerationService generation,
+        ScheduleDraftWarningsService draftWarnings) {
+        this.service = service; this.generation = generation; this.draftWarnings = draftWarnings;
+    }
 
     @GetMapping("/shift-templates")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
@@ -69,6 +76,24 @@ public class ScheduleController {
         return ResponseEntity.ok(result);
     }
 
+    @PostMapping("/work-schedules/drafts")
+    @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
+    public DraftGenerationResponse generateDraft(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody GenerateDraft request) {
+        return generation.generateDraft(actor(jwt), request);
+    }
+    @GetMapping("/work-schedules/draft-warnings")
+    @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
+    public DraftWarningsResponse draftWarnings(@AuthenticationPrincipal Jwt jwt,
+        @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate weekStart,
+        @RequestParam(required = false) UUID managerId) {
+        return draftWarnings.warnings(actor(jwt), weekStart, managerId);
+    }
+    @PostMapping("/work-schedules/draft-assignments")
+    @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
+    public ResponseEntity<ScheduleResponse> assignDraft(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody AssignShift request) {
+        var result = service.assignDraft(actor(jwt), request);
+        return ResponseEntity.created(URI.create("/api/v1/work-schedules/" + result.id())).body(result);
+    }
     @DeleteMapping("/work-schedules/{id}")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<Void> cancel(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID id) {

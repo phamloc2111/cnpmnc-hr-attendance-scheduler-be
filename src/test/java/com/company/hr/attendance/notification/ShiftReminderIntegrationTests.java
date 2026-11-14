@@ -102,7 +102,7 @@ class ShiftReminderIntegrationTests {
         ));
 
         // Create unpublished shift first, then publish via /work-schedules/publish or save draft + published
-        duePublishedShift = schedules.save(new WorkSchedule(employee.getId(), tpl, scheduleDate, VN, manager.getId()));
+        duePublishedShift = schedules.save(new WorkSchedule(employee.getId(), tpl, scheduleDate, VN, manager.getId(), true));
 
         managerToken = login("mgr.notif@example.com");
         employeeToken = login("emp.notif@example.com");

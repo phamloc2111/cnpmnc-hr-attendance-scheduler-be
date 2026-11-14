@@ -3,6 +3,7 @@ package com.company.hr.attendance.workschedule;
 import com.company.hr.attendance.identity.PostgresTestConfig;
 import com.company.hr.attendance.identity.domain.*;
 import com.company.hr.attendance.identity.infrastructure.*;
+import com.company.hr.attendance.workschedule.WorkScheduleApi;
 import com.fasterxml.jackson.databind.*;
 import java.util.*;
 import java.util.concurrent.*;
@@ -22,11 +23,12 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.*;
+import org.springframework.transaction.support.TransactionTemplate;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-@SpringBootTest
+@SpringBootTest(properties = "app.scheduling.max-weekly-minutes=2400")
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @Import(PostgresTestConfig.class)
@@ -38,12 +40,15 @@ class ScheduleIntegrationTests {
     @Autowired PasswordEncoder passwords;
     @Autowired JdbcTemplate jdbc;
     @Autowired DataSource dataSource;
+    @Autowired WorkScheduleApi scheduleDirectory;
+    @Autowired TransactionTemplate transactions;
     Account admin, manager, otherManager, employee, outsider;
     String adminToken, managerToken, employeeToken;
     static final UUID POSITION_ID = UUID.fromString("00000000-0000-0000-0000-000000000051");
     static final String PASSWORD = "Test-password-123!";
 
     @BeforeEach void seed() throws Exception {
+        jdbc.update("DELETE FROM schedule_draft_weeks");
         jdbc.update("DELETE FROM work_schedules");
         jdbc.update("DELETE FROM work_shift_templates");
         sessions.deleteAll();
@@ -64,84 +69,168 @@ class ScheduleIntegrationTests {
         assign(managerToken, employee, template, "2026-11-09").andExpect(status().isCreated())
             .andExpect(jsonPath("$.requiredPosition").value("Thu ngân"));
         assign(adminToken, outsider, template, "2026-11-09").andExpect(status().isCreated());
-
-        // Lịch chưa công bố -> nhân viên chưa thấy
-        mvc.perform(get("/api/v1/work-schedules").header("Authorization", "Bearer " + employeeToken)
-            .param("from", "2026-11-08").param("to", "2026-11-09"))
-            .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(0));
-
-        // Quản lý công bố lịch tuần
-        mvc.perform(post("/api/v1/work-schedules/publish").header("Authorization", "Bearer " + managerToken)
-            .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(Map.of(
-                "from", "2026-11-08", "to", "2026-11-09", "confirmOvertime", true))))
-            .andExpect(status().isOk()).andExpect(jsonPath("$.publishedCount").value(1));
-
-        // Sau khi công bố -> nhân viên thấy lịch của mình kèm vị trí
         mvc.perform(get("/api/v1/work-schedules").header("Authorization", "Bearer " + employeeToken)
             .param("from", "2026-11-08").param("to", "2026-11-09"))
             .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
             .andExpect(jsonPath("$.items[0].requiredPosition").value("Thu ngân"))
-            .andExpect(jsonPath("$.items[0].published").value(true))
             .andExpect(jsonPath("$.items[0].startsAt").value("2026-11-09T00:00:00Z"));
+    }
+
+    @Test void draftAssignmentIsVisibleToManagerButNotEmployeeOrAttendance() throws Exception {
+        var template = shift("07:00", "11:00", 0);
+        var created = json(mvc.perform(post("/api/v1/work-schedules/draft-assignments")
+            .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
+            .content(mapper.writeValueAsString(Map.of("employeeId", employee.getId(),
+                "shiftTemplateId", template.get("id").asText(), "workDate", "2026-11-05"))))
+            .andExpect(status().isCreated()).andExpect(jsonPath("$.draft").value(true)));
+        mvc.perform(get("/api/v1/work-schedules").header("Authorization", "Bearer " + managerToken)
+            .param("from", "2026-11-02").param("to", "2026-11-08"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
+            .andExpect(jsonPath("$.items[0].draft").value(true));
+        mvc.perform(get("/api/v1/work-schedules").header("Authorization", "Bearer " + employeeToken)
+            .param("from", "2026-11-02").param("to", "2026-11-08"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(0));
+        var locked = transactions.execute(ignored -> scheduleDirectory.lock(
+            UUID.fromString(created.get("id").asText())));
+        assertThat(locked.isEmpty()).isTrue();
+        assertThat(scheduleDirectory.employeeShifts(List.of(employee.getId()),
+            java.time.LocalDate.parse("2026-11-02"), java.time.LocalDate.parse("2026-11-08"))).isEmpty();
+        mvc.perform(get("/api/v1/work-schedules/draft-warnings")
+            .header("Authorization", "Bearer " + managerToken).param("weekStart", "2026-11-02"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.draftExists").value(true))
+            .andExpect(jsonPath("$.missingCount").value(0));
+    }
+
+    @Test void oneClickDraftReportsShortagesWhenNobodyRegistered() throws Exception {
+        var template = shift("07:00", "11:00", 0);
+        mvc.perform(post("/api/v1/work-schedules/drafts")
+            .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"weekStart\":\"2026-11-16\"}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.createdCount").value(0))
+            .andExpect(jsonPath("$.missingCount").value(7))
+            .andExpect(jsonPath("$.shortages.length()").value(7));
+        assertThat(jdbc.queryForObject("select count(*) from work_schedules", Integer.class)).isZero();
+        mvc.perform(get("/api/v1/work-schedules/draft-warnings")
+            .header("Authorization", "Bearer " + managerToken).param("weekStart", "2026-11-16"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.draftExists").value(true))
+            .andExpect(jsonPath("$.missingCount").value(7))
+            .andExpect(jsonPath("$.shortages[0].shiftTemplateId").value(template.get("id").asText()));
+        mvc.perform(get("/api/v1/work-schedules/draft-warnings")
+            .header("Authorization", "Bearer " + employeeToken).param("weekStart", "2026-11-16"))
+            .andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/work-schedules/generate")
+            .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
+            .content("{}"))
+            .andExpect(status().isMethodNotAllowed());
+    }
+
+    @Test void selectedDraftOnlyPlansChosenDatesAndPersistsTheirWarnings() throws Exception {
+        var template = shift("07:00", "11:00", 0);
+        var id = template.get("id").asText();
+        var slots = List.of(Map.of("workDate", "2026-11-17", "shiftTemplateId", id),
+            Map.of("workDate", "2026-11-19", "shiftTemplateId", id));
+        mvc.perform(post("/api/v1/work-schedules/drafts")
+            .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
+            .content(mapper.writeValueAsString(Map.of("weekStart", "2026-11-16", "slots", slots))))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.missingCount").value(2))
+            .andExpect(jsonPath("$.shortages[0].workDate").value("2026-11-17"));
+        mvc.perform(get("/api/v1/work-schedules/draft-warnings")
+            .header("Authorization", "Bearer " + managerToken).param("weekStart", "2026-11-16"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.missingCount").value(2))
+            .andExpect(jsonPath("$.shortages.length()").value(2));
+        mvc.perform(post("/api/v1/work-schedules/drafts")
+            .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
+            .content(mapper.writeValueAsString(Map.of("weekStart", "2026-11-16", "slots", List.of(slots.get(1))))))
+            .andExpect(status().isOk());
+        mvc.perform(get("/api/v1/work-schedules/draft-warnings")
+            .header("Authorization", "Bearer " + managerToken).param("weekStart", "2026-11-16"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.missingCount").value(1))
+            .andExpect(jsonPath("$.shortages.length()").value(1))
+            .andExpect(jsonPath("$.shortages[0].workDate").value("2026-11-19"));
+        mvc.perform(post("/api/v1/work-schedules/drafts")
+            .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
+            .content(mapper.writeValueAsString(Map.of("weekStart", "2026-11-16", "slots", List.of()))))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_GENERATION_REQUEST"));
+    }
+
+    @Test void oneClickDraftSkipsTemplatesWhosePositionWasDeactivated() throws Exception {
+        shift("07:00", "11:00", 0);
+        jdbc.update("UPDATE organization_positions SET active=false WHERE id=?", POSITION_ID);
+
+        mvc.perform(post("/api/v1/work-schedules/drafts")
+            .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"weekStart\":\"2026-11-16\"}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.createdCount").value(0))
+            .andExpect(jsonPath("$.missingCount").value(0));
+        mvc.perform(get("/api/v1/work-schedules/draft-warnings")
+            .header("Authorization", "Bearer " + managerToken).param("weekStart", "2026-11-16"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.draftExists").value(true))
+            .andExpect(jsonPath("$.missingCount").value(0));
+
+        var activePosition = UUID.randomUUID();
+        jdbc.update("insert into organization_positions(id,name,normalized_name,active,version) values (?,?,?,true,0)",
+            activePosition, "Phục vụ", "phục vụ");
+        var activeShift = new HashMap<>(shiftBody("12:00", "16:00", 0));
+        activeShift.put("requiredPositionId", activePosition);
+        mvc.perform(post("/api/v1/shift-templates").header("Authorization", "Bearer " + managerToken)
+            .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(activeShift)))
+            .andExpect(status().isCreated());
+        mvc.perform(post("/api/v1/work-schedules/drafts")
+            .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"weekStart\":\"2026-11-16\"}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.missingCount").value(7));
+        mvc.perform(get("/api/v1/work-schedules/draft-warnings")
+            .header("Authorization", "Bearer " + managerToken).param("weekStart", "2026-11-16"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.missingCount").value(7));
+    }
+
+    @Test void oneClickDraftSkipsLegacyTemplateWithoutPositionId() throws Exception {
+        var legacyShift = shift("07:00", "11:00", 0);
+        jdbc.update("UPDATE work_shift_templates SET required_position_id=NULL WHERE id=?",
+            UUID.fromString(legacyShift.get("id").asText()));
+
+        mvc.perform(post("/api/v1/work-schedules/drafts")
+            .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"weekStart\":\"2026-11-16\"}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.createdCount").value(0))
+            .andExpect(jsonPath("$.missingCount").value(0));
+        mvc.perform(get("/api/v1/work-schedules/draft-warnings")
+            .header("Authorization", "Bearer " + managerToken).param("weekStart", "2026-11-16"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.missingCount").value(0));
+    }
+
+    @Test void draftWarningsRecalculateShortagesAndOvertimeAfterManualAssignment() throws Exception {
+        var template = shift("07:00", "22:00", 0);
+        mvc.perform(post("/api/v1/work-schedules/drafts")
+            .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"weekStart\":\"2026-11-16\"}"))
+            .andExpect(status().isOk());
+        for (int day = 16; day <= 18; day++) {
+            mvc.perform(post("/api/v1/work-schedules/draft-assignments")
+                .header("Authorization", "Bearer " + managerToken).contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.of("employeeId", employee.getId(),
+                    "shiftTemplateId", template.get("id").asText(), "workDate", "2026-11-" + day))))
+                .andExpect(status().isCreated());
+        }
+        mvc.perform(get("/api/v1/work-schedules/draft-warnings")
+            .header("Authorization", "Bearer " + managerToken).param("weekStart", "2026-11-16"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.missingCount").value(4))
+            .andExpect(jsonPath("$.overtime[0].employeeId").value(employee.getId().toString()))
+            .andExpect(jsonPath("$.overtime[0].weeklyMinutes").value(2700))
+            .andExpect(jsonPath("$.overtime[0].exceededMinutes").value(300));
+        mvc.perform(get("/api/v1/work-schedules/draft-warnings")
+            .header("Authorization", "Bearer " + token(otherManager)).param("weekStart", "2026-11-16"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.draftExists").value(false))
+            .andExpect(jsonPath("$.overtime.length()").value(0));
     }
 
     @Test void list_legacyShiftWithoutPosition_returnsNullablePosition() throws Exception {
         var template = shift("07:00", "11:00", 0);
         jdbc.update("update work_shift_templates set required_position=null where id=?", UUID.fromString(template.get("id").asText()));
         assign(managerToken, employee, template, "2026-11-09").andExpect(status().isCreated());
-        mvc.perform(post("/api/v1/work-schedules/publish").header("Authorization", "Bearer " + managerToken)
-            .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(Map.of(
-                "from", "2026-11-08", "to", "2026-11-09", "confirmOvertime", true))))
-            .andExpect(status().isOk());
         mvc.perform(get("/api/v1/work-schedules").header("Authorization", "Bearer " + employeeToken)
             .param("from", "2026-11-09").param("to", "2026-11-09"))
             .andExpect(status().isOk()).andExpect(jsonPath("$.items[0].requiredPosition").isEmpty());
-    }
-
-    @Test void reassign_dragAndDrop_enforcesHardConstraintsAndUpdatesShift() throws Exception {
-        var day = shift("08:00", "12:00", 0);
-        var afternoon = shift("13:00", "17:00", 0);
-        var assigned = json(assign(managerToken, employee, day, "2026-11-05").andExpect(status().isCreated()));
-        var scheduleId = UUID.fromString(assigned.get("id").asText());
-
-        // Nhân viên đã có ca chiều ngày 2026-11-05
-        assign(managerToken, employee, afternoon, "2026-11-05").andExpect(status().isCreated());
-
-        // Kéo thả đổi sang ngày khác (2026-11-06) thành công
-        mvc.perform(put("/api/v1/work-schedules/" + scheduleId).header("Authorization", "Bearer " + managerToken)
-            .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(Map.of(
-                "employeeId", employee.getId(), "shiftTemplateId", day.get("id").asText(), "workDate", "2026-11-06"))))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.workDate").value("2026-11-06"));
-
-        // Kéo thả đè vào ca chiều trùng giờ -> Vi phạm ràng buộc cứng -> Báo lỗi 409
-        mvc.perform(put("/api/v1/work-schedules/" + scheduleId).header("Authorization", "Bearer " + managerToken)
-            .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(Map.of(
-                "employeeId", employee.getId(), "shiftTemplateId", afternoon.get("id").asText(), "workDate", "2026-11-05"))))
-            .andExpect(status().isConflict())
-            .andExpect(jsonPath("$.code").value("SCHEDULE_OVERLAP"));
-    }
-
-    @Test void publish_warnsOnOvertimeUntilConfirmed() throws Exception {
-        var longShift = shift("08:00", "18:00", 0); // 10 giờ
-        // Phân 5 ca (50 giờ > 48 giờ)
-        for (String date : List.of("2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06")) {
-            assign(managerToken, employee, longShift, date).andExpect(status().isCreated());
-        }
-
-        // Bấm công bố mà không xác nhận vượt giờ -> Bị chặn báo OVERTIME_WARNING
-        mvc.perform(post("/api/v1/work-schedules/publish").header("Authorization", "Bearer " + managerToken)
-            .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(Map.of(
-                "from", "2026-11-02", "to", "2026-11-08", "confirmOvertime", false))))
-            .andExpect(status().isBadRequest())
-            .andExpect(jsonPath("$.code").value("OVERTIME_WARNING"));
-
-        // Khi quản lý xác nhận -> Công bố thành công
-        mvc.perform(post("/api/v1/work-schedules/publish").header("Authorization", "Bearer " + managerToken)
-            .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(Map.of(
-                "from", "2026-11-02", "to", "2026-11-08", "confirmOvertime", true))))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.publishedCount").value(5));
     }
 
     Account save(String name, Role role, UUID managerId) {
@@ -334,12 +423,6 @@ class ScheduleIntegrationTests {
         list(adminToken).andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(2));
         list(managerToken).andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
             .andExpect(jsonPath("$.items[0].employeeId").value(employee.getId().toString()));
-        // Draft schedules remain hidden from employees until published
-        list(employeeToken).andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(0));
-        mvc.perform(post("/api/v1/work-schedules/publish").header("Authorization", "Bearer " + adminToken)
-            .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(Map.of(
-                "from", "2026-11-02", "to", "2026-11-08", "confirmOvertime", true))))
-            .andExpect(status().isOk());
         list(employeeToken).andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
             .andExpect(jsonPath("$.items[0].employeeId").value(employee.getId().toString()));
         mvc.perform(get("/api/v1/work-schedules").header("Authorization", "Bearer " + employeeToken)

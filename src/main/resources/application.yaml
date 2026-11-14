@@ -55,6 +55,9 @@ management:
         enabled: true
 
 app:
+  scheduling:
+    max-weekly-minutes: ${SCHEDULING_MAX_WEEKLY_MINUTES:0}
+    min-weekly-minutes: ${SCHEDULING_MIN_WEEKLY_MINUTES:0}
   notifications:
     enabled: ${PUSH_ENABLED:false}
     email-enabled: ${EMAIL_ENABLED:true}

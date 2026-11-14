@@ -4,19 +4,26 @@ Phạm vi: SYNC-19 (US09) và SYNC-22 (US12), trên backend và web. Không thay
 
 ## Sử dụng trên web
 
-- Nhân viên bấm **Điểm danh** tại trang chủ để mở camera trực tiếp, rồi bấm **Chụp và điểm danh vào/ra**. Không có lựa chọn ảnh từ thư viện. GPS được lấy mới tại lần gửi (maximumAge: 0); từ chối quyền camera/GPS sẽ không ghi nhận.
-- Ảnh chụp mới từ video camera được đóng dấu ShiftSync, giờ Việt Nam, tọa độ và độ chính xác GPS. Đây là ảnh tạo trong web, không phải ảnh do ứng dụng Timemark riêng tạo. Trình duyệt không có API điều khiển ứng dụng Timemark.
-- Sau lượt vào, nút chuyển sang lượt ra. Cho phép ra ca đã kết thúc nếu đã vào mà chưa ra. Mỗi lần thử lại đều chụp ảnh và lấy GPS mới; giao diện khóa gửi khi đang xử lý.
-- Quản lý/quản trị mở **Phân loại ca làm** (#/attendance-results) để xem trạng thái vào, ra, tổng hợp và số phút vi phạm. Trang tải lại mỗi phút, phân trang phía server và bao gồm ca vắng không có lượt điểm danh. **Bảng công** hiện có vẫn hiển thị từng ảnh/lượt.
-- Camera và Geolocation cần HTTPS hoặc localhost, cùng quyền trình duyệt tương ứng. Hai thao tác chính là mở Điểm danh và Chụp/gửi; hộp thoại cấp quyền do hệ điều hành/trình duyệt quản lý.
-- Backend vẫn kiểm tra tọa độ điểm làm việc đã cấu hình, thời gian bằng chứng và GPS. Không bật mặc định bỏ qua xác minh; thiếu cấu hình điểm làm việc trả lỗi rõ ràng.
+- Nhân viên bấm **Điểm danh** tại trang chủ để chọn ảnh gốc đã xuất từ ứng dụng Timemark (định dạng JPEG, PNG hoặc WEBP, dung lượng tối đa 5 MB). Không chỉnh sửa, vẽ đè hoặc đóng dấu lại ảnh trên trình duyệt.
+- Backend tiếp nhận tệp ảnh gốc cùng ca làm việc (`scheduleId`) và loại lượt (`type`: `CHECK_IN`/`CHECK_OUT`), nhận diện nhân viên qua JWT.
+- Backend gọi trực tiếp `TimemarkReader` sử dụng Gemini AI để phân tích ảnh, trích xuất thời gian in trên ảnh và tọa độ GPS (kinh độ, vĩ độ).
+- Backend tự động đối chiếu tọa độ và thời gian đọc từ ảnh với điểm làm việc đã cấu hình qua `AttendanceVerificationService`. Chỉ khi toàn bộ kiểm tra thành công, lượt điểm danh và ảnh mới được lưu trữ.
 
 ## Quy tắc ghi nhận
 
 - Một ca tối đa một lượt `CHECK_IN` và một lượt `CHECK_OUT`. Lượt ra cần lượt vào; không nhận lượt vào sau khi ca kết thúc. Backend kiểm tra tài khoản nhân viên đang hoạt động và ca thuộc chính nhân viên đó. Gửi trùng trả `409`.
-- Ảnh JPEG/PNG tối đa 5 MB, lưu riêng tư trong PostgreSQL `BYTEA`. API ảnh yêu cầu JWT; nhân viên chỉ xem ảnh của mình, quản lý chỉ xem nhân viên hiện thuộc quyền, quản trị viên xem toàn bộ. Không cache ảnh.
-- Request bắt buộc có `latitude`, `longitude`, `accuracyMeters`, `locatedAt` từ vị trí mới. Vị trí quá 2 phút hoặc ở tương lai quá 30 giây bị từ chối. Thời điểm dùng để phân loại là `receivedAt` do máy chủ ghi, không tin giờ trong ảnh hoặc đồng hồ trình duyệt.
+- Ảnh JPEG/PNG/WEBP tối đa 5 MB, lưu riêng tư trong PostgreSQL `BYTEA`. API ảnh yêu cầu JWT; nhân viên chỉ xem ảnh của mình, quản lý chỉ xem nhân viên hiện thuộc quyền, quản trị viên xem toàn bộ. Không cache ảnh.
+- Không nhận hoặc dựa vào các trường GPS/thời gian (`locatedAt`, `latitude`, `longitude`, `accuracyMeters`, `timemarkCapturedAt`) từ client. Toàn bộ thông tin vị trí và thời điểm điểm danh được trích xuất trực tiếp từ ảnh Timemark trên máy chủ.
+- Ảnh thiếu thời gian hoặc thiếu kinh độ/vĩ độ sẽ bị từ chối với lỗi rõ ràng. Nếu dịch vụ Gemini OCR gặp lỗi, timeout hoặc chưa cấu hình `GEMINI_API_KEY`, request sẽ trả lỗi 502/503 và tuyệt đối không tạo bản ghi điểm danh hay lưu ảnh.
 - Ca có điểm danh không thể bị hủy (`409 SCHEDULE_HAS_ATTENDANCE`) để giữ lịch sử chứng cứ.
+
+## Cấu hình Gemini AI
+
+Trong file `.env`:
+- `GEMINI_API_KEY`: API key của Google AI Studio/Gemini, bắt buộc cấu hình để phân tích ảnh Timemark.
+- `GEMINI_MODEL`: Model sử dụng (mặc định: `gemini-2.5-flash-lite`).
+- `GEMINI_TIMEOUT_MS`: Thời gian chờ tối đa khi gọi Gemini (mặc định: `4000` ms).
+- `TIMEMARK_MAX_TIME_DIFFERENCE_SECONDS`: Chênh lệch tối đa cho phép giữa thời gian trên ảnh Timemark và giờ máy chủ (mặc định: `300` giây / 5 phút).
 
 ## Phân loại
 
