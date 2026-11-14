@@ -123,6 +123,8 @@ public class ScheduleService {
                 var weekStart = request.workDate().with(java.time.temporal.TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
                 draftWeeks.createIfAbsent(UUID.randomUUID(), managerId, weekStart);
             }
+        } else if (events != null) {
+            events.publishEvent(new SchedulePublishedEvent(Set.of(employee.id()), request.workDate(), request.workDate()));
         }
         return ScheduleResponse.from(saved, employee.name(), shift.getRequiredPosition());
     }

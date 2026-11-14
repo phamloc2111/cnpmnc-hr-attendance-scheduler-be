@@ -94,8 +94,8 @@ public class ShiftNotificationService {
 
     @Transactional
     public int sendShiftReminders(Instant now) {
-        // Find shifts starting within 25 to 35 minutes from now (30 min reminder)
-        Instant startWindow = now.plus(Duration.ofMinutes(25));
+        // Find shifts starting within 0 to 35 minutes from now (30 min reminder window, deduplicated per shift)
+        Instant startWindow = now;
         Instant endWindow = now.plus(Duration.ofMinutes(35));
 
         var shifts = jdbc.query(

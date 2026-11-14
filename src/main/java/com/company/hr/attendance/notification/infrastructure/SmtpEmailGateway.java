@@ -54,6 +54,7 @@ public class SmtpEmailGateway implements EmailGateway {
             message.setSubject(subject);
             message.setText(body);
             mailSender.send(message);
+            log.info("Sent email notification '{}' to {}", subject, toEmail);
             return true;
         } catch (Exception ex) {
             log.warn("Failed to send email notification to {}", toEmail, ex);

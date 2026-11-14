@@ -17,7 +17,7 @@ public class ShiftReminderScheduler {
         this.shiftNotifications = shiftNotifications;
     }
 
-    @Scheduled(fixedDelayString = "${app.notifications.poll-delay-ms:60000}", initialDelay = 15000)
+    @Scheduled(fixedDelayString = "${app.notifications.poll-delay-ms:15000}", initialDelay = 5000)
     public void run() {
         shiftNotifications.sendShiftReminders(Instant.now());
     }
