@@ -8,6 +8,7 @@ import com.company.hr.attendance.workschedule.api.ScheduleModels.*;
 import com.company.hr.attendance.workschedule.application.ScheduleService;
 import com.company.hr.attendance.workschedule.domain.ShiftTemplate;
 import com.company.hr.attendance.workschedule.domain.WorkSchedule;
+import com.company.hr.attendance.workschedule.infrastructure.ScheduleDraftWeekRepository;
 import com.company.hr.attendance.workschedule.infrastructure.ShiftTemplateRepository;
 import com.company.hr.attendance.workschedule.infrastructure.WorkScheduleRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,6 +28,7 @@ class ScheduleServiceUnitTest {
     private IdentityApi identity;
     private ShiftTemplateRepository shifts;
     private WorkScheduleRepository schedules;
+    private ScheduleDraftWeekRepository draftWeeks;
     private PositionsApi positions;
     private AttendanceApi attendance;
     private ScheduleService service;
@@ -40,6 +42,7 @@ class ScheduleServiceUnitTest {
         identity = mock(IdentityApi.class);
         shifts = mock(ShiftTemplateRepository.class);
         schedules = mock(WorkScheduleRepository.class);
+        draftWeeks = mock(ScheduleDraftWeekRepository.class);
         positions = mock(PositionsApi.class);
         attendance = mock(AttendanceApi.class);
 
@@ -47,7 +50,7 @@ class ScheduleServiceUnitTest {
         when(identity.person(employeeId)).thenReturn(new IdentityApi.Person(employeeId, "Employee", "EMPLOYEE", false, managerId));
         when(identity.lockPerson(employeeId)).thenReturn(new IdentityApi.Person(employeeId, "Employee", "EMPLOYEE", false, managerId));
 
-        service = new ScheduleService(identity, shifts, schedules, "Asia/Ho_Chi_Minh", positions, attendance);
+        service = new ScheduleService(identity, shifts, schedules, draftWeeks, "Asia/Ho_Chi_Minh", positions, attendance);
     }
 
     @Test

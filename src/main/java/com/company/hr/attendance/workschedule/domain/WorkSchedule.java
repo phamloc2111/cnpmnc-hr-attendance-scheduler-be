@@ -17,16 +17,20 @@ public class WorkSchedule {
     @Column(nullable = false) private int breakMinutes;
     @Column(nullable = false, length = 64) private String timezone;
     @Column(nullable = false) private UUID createdBy;
+    @Column(nullable = false) private boolean draft;
     @Column(nullable = false) private boolean published;
     @Column private Instant publishedAt;
     @Column private UUID publishedBy;
 
     protected WorkSchedule() {}
     public WorkSchedule(UUID employeeId, ShiftTemplate shift, LocalDate date, ZoneId zone, UUID creator) {
+        this(employeeId, shift, date, zone, creator, false);
+    }
+    public WorkSchedule(UUID employeeId, ShiftTemplate shift, LocalDate date, ZoneId zone, UUID creator, boolean draft) {
         this.id = UUID.randomUUID(); this.employeeId = employeeId; this.shiftTemplateId = shift.getId();
         this.workDate = date; this.shiftName = shift.getName(); this.breakMinutes = shift.getBreakMinutes();
-        this.timezone = zone.getId(); this.createdBy = creator;
-        this.published = false;
+        this.timezone = zone.getId(); this.createdBy = creator; this.draft = draft;
+        this.published = !draft;
         var window = ShiftWindow.of(date, shift.getStartTime(), shift.getEndTime(), zone);
         this.startsAt = window.startsAt(); this.endsAt = window.endsAt();
     }
@@ -44,6 +48,7 @@ public class WorkSchedule {
     }
 
     public void publish(UUID publisher, Instant at) {
+        this.draft = false;
         this.published = true;
         this.publishedBy = publisher;
         this.publishedAt = at;
@@ -58,6 +63,7 @@ public class WorkSchedule {
     public Instant getEndsAt() { return endsAt; }
     public int getBreakMinutes() { return breakMinutes; }
     public String getTimezone() { return timezone; }
+    public boolean isDraft() { return draft; }
     public boolean isPublished() { return published; }
     public Instant getPublishedAt() { return publishedAt; }
     public UUID getPublishedBy() { return publishedBy; }

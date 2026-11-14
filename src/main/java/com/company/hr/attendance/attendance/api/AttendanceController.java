@@ -36,15 +36,8 @@ public class AttendanceController {
     @PreAuthorize("hasRole('EMPLOYEE')")
     public ResponseEntity<EventResponse> record(@AuthenticationPrincipal Jwt jwt,
         @RequestParam UUID scheduleId, @RequestParam EventType type,
-        @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant locatedAt,
-        @RequestParam Double latitude, @RequestParam Double longitude,
-        @RequestParam Double accuracyMeters,
-        @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant timemarkCapturedAt,
-        @RequestParam Double timemarkLatitude, @RequestParam Double timemarkLongitude,
         @RequestParam MultipartFile photo) {
-        var result = service.record(UUID.fromString(jwt.getSubject()), scheduleId, type,
-            locatedAt, latitude, longitude, accuracyMeters,
-            new TimemarkEvidence(timemarkCapturedAt, timemarkLatitude, timemarkLongitude), photo);
+        var result = service.record(UUID.fromString(jwt.getSubject()), scheduleId, type, photo);
         return ResponseEntity.created(URI.create("/api/v1/attendance/events/" + result.id())).body(result);
     }
 

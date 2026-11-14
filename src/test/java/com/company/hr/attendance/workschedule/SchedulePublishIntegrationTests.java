@@ -212,6 +212,8 @@ class SchedulePublishIntegrationTests {
                 ))))
             .andExpect(status().isCreated())
             .andReturn();
-        return UUID.fromString(mapper.readTree(res.getResponse().getContentAsString()).get("id").asText());
+        UUID id = UUID.fromString(mapper.readTree(res.getResponse().getContentAsString()).get("id").asText());
+        jdbc.update("UPDATE work_schedules SET draft = true, published = false WHERE id = ?", id);
+        return id;
     }
 }

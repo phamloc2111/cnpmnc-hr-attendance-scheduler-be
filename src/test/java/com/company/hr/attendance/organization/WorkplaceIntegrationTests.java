@@ -31,6 +31,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class WorkplaceIntegrationTests {
     @org.springframework.test.context.bean.override.mockito.MockitoBean
     com.company.hr.attendance.organization.infrastructure.GoongPlacesClient places;
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    com.company.hr.attendance.attendance.application.TimemarkReader timemarkReader;
 
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper mapper;
@@ -47,6 +49,9 @@ class WorkplaceIntegrationTests {
     @BeforeEach void seed() throws Exception {
         clear(); managerToken = token("workplace-manager", Role.MANAGER);
         adminToken = token("workplace-admin", Role.ADMIN); employeeToken = token("workplace-employee", Role.EMPLOYEE);
+        org.mockito.Mockito.when(timemarkReader.read(org.mockito.ArgumentMatchers.any())).thenAnswer(inv ->
+            new com.company.hr.attendance.attendance.api.AttendanceModels.TimemarkAnalysisResponse(
+                true, Instant.now().toString(), 10.7726, 106.6579, "268 Lý Thường Kiệt", null));
     }
     @AfterEach void cleanup() { clear(); }
     void clear() {
@@ -133,10 +138,7 @@ class WorkplaceIntegrationTests {
     org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder upload(UUID shiftId) {
         return multipart("/api/v1/attendance/events").file(new org.springframework.mock.web.MockMultipartFile(
             "photo", "camera.jpg", "image/jpeg", new byte[]{(byte) 0xff, (byte) 0xd8, (byte) 0xff, 1}))
-            .param("scheduleId", shiftId.toString()).param("type", "CHECK_IN")
-            .param("locatedAt", Instant.now().toString()).param("latitude", "10.7726").param("longitude", "106.6579")
-            .param("accuracyMeters", "5").param("timemarkCapturedAt", Instant.now().toString())
-            .param("timemarkLatitude", "10.7726").param("timemarkLongitude", "106.6579");
+            .param("scheduleId", shiftId.toString()).param("type", "CHECK_IN");
     }
 
     @Test void managersAndAdminsCanSearchAndResolveWithoutSavingSettings() throws Exception {
