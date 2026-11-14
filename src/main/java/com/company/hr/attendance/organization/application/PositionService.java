@@ -58,6 +58,11 @@ public class PositionService implements PositionsApi {
         }
         return new Selection(position.getId(),position.getName());
     }
+    public Set<UUID> activeIds(Collection<UUID> ids) {
+        if (ids.isEmpty()) return Set.of();
+        return positions.findAllById(ids).stream().filter(Position::isActive)
+            .map(Position::getId).collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
     private void actor(UUID actorId, boolean write) {
         var actor=identity.person(actorId);
         if (actor.locked() || (write ? !actor.role().equals("MANAGER") : !Set.of("ADMIN","MANAGER").contains(actor.role()))) {
