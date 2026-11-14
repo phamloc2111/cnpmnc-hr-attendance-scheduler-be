@@ -1,6 +1,7 @@
 package com.company.hr.attendance.workschedule.application;
 
 import com.company.hr.attendance.attendance.AttendanceApi;
+import com.company.hr.attendance.audit.AuditApi;
 import com.company.hr.attendance.identity.IdentityApi;
 import com.company.hr.attendance.organization.PositionsApi;
 import com.company.hr.attendance.workschedule.api.ScheduleModels.*;
@@ -9,6 +10,7 @@ import com.company.hr.attendance.workschedule.infrastructure.*;
 import java.time.*;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.*;
 import org.springframework.data.jpa.domain.Specification;
@@ -19,6 +21,7 @@ import static org.springframework.http.HttpStatus.*;
 @Service
 @Transactional(readOnly = true)
 public class ScheduleService {
+    private static final int MAX_WEEKLY_WORKING_MINUTES = 48 * 60; // 48 giờ/tuần
     private final IdentityApi identity;
     private final ShiftTemplateRepository shifts;
     private final WorkScheduleRepository schedules;
@@ -26,18 +29,46 @@ public class ScheduleService {
     private final ZoneId zone;
     private final PositionsApi positions;
     private final AttendanceApi attendance;
+    private final org.springframework.context.ApplicationEventPublisher events;
+    private final AuditApi audit;
+
+    public ScheduleService(IdentityApi identity, ShiftTemplateRepository shifts, WorkScheduleRepository schedules,
+                           ScheduleDraftWeekRepository draftWeeks,
+                           String timezone, PositionsApi positions, AttendanceApi attendance) {
+        this(identity, shifts, schedules, draftWeeks, timezone, positions, attendance, null, null);
+    }
+
+    public ScheduleService(IdentityApi identity, ShiftTemplateRepository shifts, WorkScheduleRepository schedules,
+                           ScheduleDraftWeekRepository draftWeeks,
+                           String timezone, PositionsApi positions, AttendanceApi attendance, AuditApi audit) {
+        this(identity, shifts, schedules, draftWeeks, timezone, positions, attendance, null, audit);
+    }
+
+    public ScheduleService(IdentityApi identity, ShiftTemplateRepository shifts, WorkScheduleRepository schedules,
+                           ScheduleDraftWeekRepository draftWeeks,
+                           String timezone, PositionsApi positions, AttendanceApi attendance,
+                           org.springframework.context.ApplicationEventPublisher events) {
+        this(identity, shifts, schedules, draftWeeks, timezone, positions, attendance, events, null);
+    }
+
+    @Autowired
     public ScheduleService(IdentityApi identity, ShiftTemplateRepository shifts, WorkScheduleRepository schedules,
                            ScheduleDraftWeekRepository draftWeeks,
                            @Value("${app.timezone:Asia/Ho_Chi_Minh}") String timezone, PositionsApi positions,
-                           AttendanceApi attendance) {
+                           AttendanceApi attendance,
+                           org.springframework.context.ApplicationEventPublisher events,
+                           AuditApi audit) {
         this.identity = identity; this.shifts = shifts; this.schedules = schedules; this.draftWeeks = draftWeeks;
         this.zone = ZoneId.of(timezone);
         this.positions = positions; this.attendance = attendance;
+        this.events = events; this.audit = audit;
     }
+
     public PageResponse<ShiftResponse> shifts(UUID actorId, int page, int size) {
         management(actorId);
         return PageResponse.from(shifts.findAll(PageRequest.of(page, size, Sort.by("name", "id"))).map(ShiftResponse::from));
     }
+
     @Transactional
     public ShiftResponse createShift(UUID actorId, CreateShift request) {
         management(actorId);
@@ -56,6 +87,7 @@ public class ScheduleService {
         return ShiftResponse.from(shifts.save(new ShiftTemplate(request.name().strip(), start, end,
             request.breakMinutes(), actorId, request.requiredHeadcount(), selected.name(), selected.id(), request.overnight())));
     }
+
     public PageResponse<ScheduleResponse> list(UUID actorId, LocalDate from, LocalDate to, UUID employeeId, int page, int size) {
         if (to.isBefore(from) || ChronoUnit.DAYS.between(from, to) > 30) {
             throw new ScheduleException(BAD_REQUEST, "INVALID_DATE_RANGE", "Khoảng ngày phải hợp lệ và không quá 31 ngày.");
@@ -65,14 +97,20 @@ public class ScheduleService {
             cb.between(root.get("workDate"), from, to);
         if (actor.role().equals("EMPLOYEE")) {
             if (employeeId != null && !employeeId.equals(actorId)) throw forbidden();
+            // Nhân viên chỉ xem các ca trong lịch ĐÃ CÔNG BỐ (không phải nháp)
             filter = filter.and((root, ignored, cb) -> cb.and(
-                cb.equal(root.get("employeeId"), actorId), cb.isFalse(root.get("draft"))));
+                cb.equal(root.get("employeeId"), actorId),
+                cb.isFalse(root.get("draft")),
+                cb.isTrue(root.get("published"))
+            ));
         } else if (actor.role().equals("MANAGER")) {
             var ids = identity.managedEmployeeIds(actorId);
             if (employeeId != null && !ids.contains(employeeId)) throw notFound();
             filter = filter.and((root, ignored, cb) -> ids.isEmpty() ? cb.disjunction() : root.get("employeeId").in(ids));
         }
-        if (employeeId != null) filter = filter.and((root, ignored, cb) -> cb.equal(root.get("employeeId"), employeeId));
+        if (employeeId != null && !actor.role().equals("EMPLOYEE")) {
+            filter = filter.and((root, ignored, cb) -> cb.equal(root.get("employeeId"), employeeId));
+        }
         var result = schedules.findAll(filter, PageRequest.of(page, size, Sort.by("workDate", "startsAt", "id")));
         var names = identity.names(result.stream().map(WorkSchedule::getEmployeeId).distinct().toList());
         var positionNames = new HashMap<UUID, String>();
@@ -81,6 +119,7 @@ public class ScheduleService {
         return PageResponse.from(result.map(schedule -> ScheduleResponse.from(schedule,
             names.getOrDefault(schedule.getEmployeeId(), "Nhân viên"), positionNames.get(schedule.getShiftTemplateId()))));
     }
+
     @Transactional
     public ScheduleResponse assign(UUID actorId, AssignShift request) {
         return assign(actorId, request, false);
@@ -91,7 +130,6 @@ public class ScheduleService {
     }
     private ScheduleResponse assign(UUID actorId, AssignShift request, boolean draft) {
         var actor = management(actorId);
-        // All schedule writes for one employee share this row lock, including concurrent HTTP requests.
         var employee = identity.lockPerson(request.employeeId());
         checkEmployee(actor, employee);
         if (employee.locked()) throw new ScheduleException(CONFLICT, "EMPLOYEE_LOCKED", "Nhân viên đang bị khóa tài khoản.");
@@ -103,15 +141,106 @@ public class ScheduleService {
             throw new ScheduleException(CONFLICT, "SCHEDULE_OVERLAP", "Nhân viên đã có ca trùng giờ, kể cả ca từ ngày trước.");
         }
         var saved = schedules.saveAndFlush(schedule);
-        if (draft) {
+        if (draft && draftWeeks != null) {
             UUID managerId = actor.role().equals("MANAGER") ? actorId : employee.managerId();
             if (managerId != null) {
                 var weekStart = request.workDate().with(java.time.temporal.TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
                 draftWeeks.createIfAbsent(UUID.randomUUID(), managerId, weekStart);
             }
+        } else if (events != null) {
+            events.publishEvent(new SchedulePublishedEvent(Set.of(employee.id()), request.workDate(), request.workDate()));
+        }
+        if (audit != null) {
+            audit.record(
+                actorId,
+                employee.id(),
+                request.workDate(),
+                "SCHEDULE",
+                "SCHEDULE_ASSIGNED",
+                "Phân ca " + shift.getName() + " cho " + employee.name() + " ngày " + request.workDate(),
+                null,
+                "Ca: " + shift.getName() + " (" + shift.getStartTime() + " - " + shift.getEndTime() + "), Ngày: " + request.workDate(),
+                Instant.now()
+            );
         }
         return ScheduleResponse.from(saved, employee.name(), shift.getRequiredPosition());
     }
+
+    @Transactional
+    public ScheduleResponse reassign(UUID actorId, UUID id, ReassignShift request) {
+        var actor = management(actorId);
+        var schedule = schedules.lockById(id).orElseThrow(ScheduleService::notFound);
+        var oldEmployee = identity.lockPerson(schedule.getEmployeeId());
+        if (!actor.role().equals("ADMIN")) checkEmployee(actor, oldEmployee);
+
+        var newEmployee = identity.lockPerson(request.employeeId());
+        checkEmployee(actor, newEmployee);
+        if (newEmployee.locked()) throw new ScheduleException(CONFLICT, "EMPLOYEE_LOCKED", "Nhân viên đang bị khóa tài khoản.");
+
+        var shift = shifts.findById(request.shiftTemplateId()).orElseThrow(() ->
+            new ScheduleException(NOT_FOUND, "SHIFT_NOT_FOUND", "Không tìm thấy mẫu ca."));
+
+        var window = ShiftWindow.of(request.workDate(), shift.getStartTime(), shift.getEndTime(), zone);
+        // Kiểm tra ràng buộc cứng: Trùng giờ với ca khác của nhân viên mới
+        if (schedules.existsByEmployeeIdAndIdNotAndStartsAtLessThanAndEndsAtGreaterThan(
+            newEmployee.id(), id, window.endsAt(), window.startsAt())) {
+            throw new ScheduleException(CONFLICT, "SCHEDULE_OVERLAP", "Nhân viên đã có ca trùng giờ, vi phạm ràng buộc cứng.");
+        }
+
+        schedule.reassign(newEmployee.id(), shift, request.workDate(), zone);
+        return ScheduleResponse.from(schedules.saveAndFlush(schedule), newEmployee.name(), shift.getRequiredPosition());
+    }
+
+    @Transactional
+    public PublishScheduleResponse publish(UUID actorId, PublishScheduleRequest request) {
+        var actor = management(actorId);
+        if (request.to().isBefore(request.from()) || ChronoUnit.DAYS.between(request.from(), request.to()) > 30) {
+            throw new ScheduleException(BAD_REQUEST, "INVALID_DATE_RANGE", "Khoảng ngày công bố phải hợp lệ và không quá 31 ngày.");
+        }
+
+        Specification<WorkSchedule> filter = (root, ignored, cb) -> cb.between(root.get("workDate"), request.from(), request.to());
+        if (actor.role().equals("MANAGER")) {
+            var ids = identity.managedEmployeeIds(actorId);
+            if (request.employeeId() != null && !ids.contains(request.employeeId())) throw notFound();
+            filter = filter.and((root, ignored, cb) -> ids.isEmpty() ? cb.disjunction() : root.get("employeeId").in(ids));
+        }
+        if (request.employeeId() != null) {
+            filter = filter.and((root, ignored, cb) -> cb.equal(root.get("employeeId"), request.employeeId()));
+        }
+
+        var list = schedules.findAll(filter);
+        if (list.isEmpty()) {
+            return new PublishScheduleResponse(0, request.from(), request.to(), Instant.now());
+        }
+
+        // Kiểm tra cảnh báo vượt giờ (vượt 48h trong tuần)
+        if (!request.confirmOvertime()) {
+            Map<UUID, Long> minutesPerEmployee = new HashMap<>();
+            for (var sch : list) {
+                long duration = Duration.between(sch.getStartsAt(), sch.getEndsAt()).toMinutes() - sch.getBreakMinutes();
+                minutesPerEmployee.merge(sch.getEmployeeId(), duration, Long::sum);
+            }
+            boolean hasOvertime = minutesPerEmployee.values().stream().anyMatch(m -> m > MAX_WEEKLY_WORKING_MINUTES);
+            if (hasOvertime) {
+                throw new ScheduleException(BAD_REQUEST, "OVERTIME_WARNING",
+                    "Có nhân viên vượt quá giới hạn giờ làm trong tuần (48 giờ). Quản lý cần xác nhận trước khi công bố.");
+            }
+        }
+
+        var now = Instant.now();
+        int count = 0;
+        for (var sch : list) {
+            sch.publish(actorId, now);
+            count++;
+        }
+        schedules.saveAllAndFlush(list);
+        if (count > 0 && events != null) {
+            java.util.Set<UUID> employeeIds = list.stream().map(WorkSchedule::getEmployeeId).collect(java.util.stream.Collectors.toSet());
+            events.publishEvent(new SchedulePublishedEvent(employeeIds, request.from(), request.to()));
+        }
+        return new PublishScheduleResponse(count, request.from(), request.to(), now);
+    }
+
     @Transactional
     public void cancel(UUID actorId, UUID id) {
         var actor = management(actorId);
@@ -123,24 +252,42 @@ public class ScheduleService {
             "Ca đã có lượt điểm danh; không thể hủy.");
         schedules.delete(schedule);
         schedules.flush();
+        if (audit != null) {
+            audit.record(
+                actorId,
+                employee.id(),
+                schedule.getWorkDate(),
+                "SCHEDULE",
+                "SCHEDULE_CANCELLED",
+                "Hủy ca " + schedule.getShiftName() + " của " + employee.name() + " ngày " + schedule.getWorkDate(),
+                "Ca: " + schedule.getShiftName() + ", Ngày: " + schedule.getWorkDate(),
+                "Đã hủy ca làm việc",
+                Instant.now()
+            );
+        }
     }
+
     private IdentityApi.Person active(UUID id) {
         var person = identity.person(id);
         if (person.locked()) throw forbidden();
         return person;
     }
+
     private IdentityApi.Person management(UUID id) {
         var actor = active(id);
         if (!Set.of("ADMIN", "MANAGER").contains(actor.role())) throw forbidden();
         return actor;
     }
+
     private void checkEmployee(IdentityApi.Person actor, IdentityApi.Person employee) {
         if (!employee.role().equals("EMPLOYEE") ||
             actor.role().equals("MANAGER") && !actor.id().equals(employee.managerId())) throw notFound();
     }
+
     private static ScheduleException forbidden() {
         return new ScheduleException(FORBIDDEN, "FORBIDDEN", "Bạn không có quyền thực hiện thao tác này.");
     }
+
     private static ScheduleException notFound() {
         return new ScheduleException(NOT_FOUND, "SCHEDULE_NOT_FOUND", "Không tìm thấy lịch hoặc nhân viên trong phạm vi quản lý.");
     }

@@ -10,6 +10,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.data.jpa.repository.*;
 public interface WorkScheduleRepository extends JpaRepository<WorkSchedule, UUID>, JpaSpecificationExecutor<WorkSchedule> {
     boolean existsByEmployeeIdAndStartsAtLessThanAndEndsAtGreaterThan(UUID employeeId, Instant end, Instant start);
+    boolean existsByEmployeeIdAndIdNotAndStartsAtLessThanAndEndsAtGreaterThan(UUID employeeId, UUID id, Instant end, Instant start);
     List<WorkSchedule> findByEmployeeIdInAndStartsAtLessThanAndEndsAtGreaterThan(
         Collection<UUID> employeeIds, Instant end, Instant start);
     List<WorkSchedule> findByEmployeeIdInAndWorkDateBetween(Collection<UUID> employeeIds, LocalDate from, LocalDate to);

@@ -8,6 +8,8 @@ import jakarta.annotation.PreDestroy;
 import java.io.IOException;
 import java.nio.file.*;
 import java.time.*;
+import java.util.Map;
+import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -26,7 +28,7 @@ public class FirebasePushGateway implements PushGateway {
         } catch (IOException error) { throw new IllegalStateException("Cannot load Firebase service account; check the configured private file and mount"); }
     }
     public boolean available() { return app != null; }
-    public Result send(java.util.UUID employeeId, String token, LocalDate week, String kind, Instant expiresAt, Instant now) {
+    public Result send(UUID employeeId, String token, LocalDate week, String kind, Instant expiresAt, Instant now) {
         if (app == null) return Result.RETRY;
         long ttl = Math.max(0, Duration.between(now, expiresAt).getSeconds());
         if (ttl == 0) return Result.RETRY;
@@ -39,7 +41,31 @@ public class FirebasePushGateway implements PushGateway {
         try { FirebaseMessaging.getInstance(app).send(message); return Result.SENT; }
         catch (FirebaseMessagingException error) {
             log.warn("FCM rejected a delivery: {}",error.getMessagingErrorCode());
-            // Never log the exception text: provider messages may contain device tokens.
+            return error.getMessagingErrorCode() == MessagingErrorCode.UNREGISTERED ? Result.INVALID_TOKEN : Result.RETRY;
+        }
+    }
+
+    @Override
+    public Result sendCustom(UUID employeeId, String token, String title, String body, Map<String, String> data, Instant expiresAt, Instant now) {
+        String tag = data != null ? data.getOrDefault("tag", "notification-" + System.currentTimeMillis()) : "notification-" + System.currentTimeMillis();
+        return sendCustom(employeeId, token, title, body, tag, data, expiresAt, now);
+    }
+
+    @Override
+    public Result sendCustom(UUID userId, String token, String title, String body, String tag, Map<String, String> data, Instant expiresAt, Instant now) {
+        if (app == null) return Result.RETRY;
+        long ttl = Math.max(0, Duration.between(now, expiresAt).getSeconds());
+        if (ttl == 0) return Result.RETRY;
+        var builder = Message.builder().setToken(token)
+            .putData("employeeId", userId.toString()).putData("expiresAt", expiresAt.toString())
+            .putData("title", title).putData("body", body).putData("tag", tag);
+        if (data != null) {
+            data.forEach((k, v) -> { if (k != null && v != null) builder.putData(k, v); });
+        }
+        var message = builder.setWebpushConfig(WebpushConfig.builder().putHeader("TTL", Long.toString(ttl)).putHeader("Urgency", "high").build()).build();
+        try { FirebaseMessaging.getInstance(app).send(message); return Result.SENT; }
+        catch (FirebaseMessagingException error) {
+            log.warn("FCM custom delivery rejected: {}", error.getMessagingErrorCode());
             return error.getMessagingErrorCode() == MessagingErrorCode.UNREGISTERED ? Result.INVALID_TOKEN : Result.RETRY;
         }
     }
