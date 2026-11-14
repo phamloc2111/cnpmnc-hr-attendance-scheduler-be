@@ -21,6 +21,7 @@ public class WorkSchedule {
     @Column(nullable = false) private boolean published;
     @Column private Instant publishedAt;
     @Column private UUID publishedBy;
+    @Column(name = "understaffed") private Boolean understaffed = false;
 
     protected WorkSchedule() {}
     public WorkSchedule(UUID employeeId, ShiftTemplate shift, LocalDate date, ZoneId zone, UUID creator) {
@@ -33,6 +34,7 @@ public class WorkSchedule {
         this.published = !draft;
         var window = ShiftWindow.of(date, shift.getStartTime(), shift.getEndTime(), zone);
         this.startsAt = window.startsAt(); this.endsAt = window.endsAt();
+        this.understaffed = false;
     }
 
     public void reassign(UUID newEmployeeId, ShiftTemplate shift, LocalDate date, ZoneId zone) {
@@ -67,4 +69,6 @@ public class WorkSchedule {
     public boolean isPublished() { return published; }
     public Instant getPublishedAt() { return publishedAt; }
     public UUID getPublishedBy() { return publishedBy; }
+    public boolean isUnderstaffed() { return Boolean.TRUE.equals(understaffed); }
+    public void markUnderstaffed() { this.understaffed = true; }
 }

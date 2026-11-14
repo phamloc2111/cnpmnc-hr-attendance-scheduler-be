@@ -1,8 +1,6 @@
 package com.company.hr.attendance.workschedule.api;
 
-import com.company.hr.attendance.workschedule.domain.ShiftTemplate;
-import com.company.hr.attendance.workschedule.domain.ShiftWindow;
-import com.company.hr.attendance.workschedule.domain.WorkSchedule;
+import com.company.hr.attendance.workschedule.domain.*;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.DeserializationContext;
@@ -23,7 +21,7 @@ public final class ScheduleModels {
         @NotBlank @Size(max = 120) String name,
         @NotNull LocalTime startTime,
         @NotNull LocalTime endTime,
-        @Min(0) @Max(1439) int breakMinutes,
+        @Min(0) int breakMinutes,
         @NotNull @Min(1) @JsonDeserialize(using = HeadcountDeserializer.class) Integer requiredHeadcount,
         @NotNull UUID requiredPositionId,
         @NotNull Boolean overnight) {}
@@ -80,12 +78,12 @@ public final class ScheduleModels {
 
     public record ScheduleResponse(UUID id, UUID employeeId, String employeeName, UUID shiftTemplateId,
         LocalDate workDate, String shiftName, Instant startsAt, Instant endsAt, int breakMinutes,
-        long workingMinutes, String timezone, String requiredPosition, boolean draft, boolean published) {
+        long workingMinutes, String timezone, String requiredPosition, boolean draft, boolean published, boolean understaffed) {
         public static ScheduleResponse from(WorkSchedule schedule, String name, String requiredPosition) {
             return new ScheduleResponse(schedule.getId(), schedule.getEmployeeId(), name, schedule.getShiftTemplateId(),
                 schedule.getWorkDate(), schedule.getShiftName(), schedule.getStartsAt(), schedule.getEndsAt(),
                 schedule.getBreakMinutes(), Duration.between(schedule.getStartsAt(), schedule.getEndsAt()).toMinutes()
-                    - schedule.getBreakMinutes(), schedule.getTimezone(), requiredPosition, schedule.isDraft(), schedule.isPublished());
+                    - schedule.getBreakMinutes(), schedule.getTimezone(), requiredPosition, schedule.isDraft(), schedule.isPublished(), schedule.isUnderstaffed());
         }
     }
 
