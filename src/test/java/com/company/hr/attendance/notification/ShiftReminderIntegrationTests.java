@@ -4,6 +4,7 @@ import com.company.hr.attendance.identity.domain.Account;
 import com.company.hr.attendance.identity.domain.Role;
 import com.company.hr.attendance.identity.infrastructure.AccountRepository;
 import com.company.hr.attendance.identity.infrastructure.LoginSessionRepository;
+import com.company.hr.attendance.notification.application.EmailGateway;
 import com.company.hr.attendance.notification.application.PushGateway;
 import com.company.hr.attendance.notification.application.ShiftNotificationService;
 import com.company.hr.attendance.organization.domain.Position;
@@ -21,7 +22,6 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,6 +38,11 @@ import org.springframework.test.web.servlet.MockMvc;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -60,6 +65,7 @@ class ShiftReminderIntegrationTests {
     @Autowired PasswordEncoder passwords;
 
     @MockitoBean PushGateway gateway;
+    @MockitoBean EmailGateway emailGateway;
 
     private static final String PASSWORD = "Test-password-123!";
     private static final ZoneId VN = ZoneId.of("Asia/Ho_Chi_Minh");
@@ -73,6 +79,8 @@ class ShiftReminderIntegrationTests {
     void setup() throws Exception {
         cleanup();
         when(gateway.available()).thenReturn(true);
+        when(emailGateway.available()).thenReturn(true);
+        when(emailGateway.sendEmail(anyString(), anyString(), anyString())).thenReturn(true);
 
         manager = accounts.save(new Account("mgr.notif@example.com", passwords.encode(PASSWORD), "Quản lý Thông báo", Role.MANAGER));
         Position pos = positions.save(new Position("Thu ngân", manager.getId()));
@@ -135,7 +143,7 @@ class ShiftReminderIntegrationTests {
             .andExpect(status().isAccepted())
             .andExpect(jsonPath("$.queued").value(0));
 
-        // Manager publishes schedule -> emits SchedulePublishedEvent -> records SCHEDULE_PUBLISHED log
+        // Manager publishes schedule -> emits SchedulePublishedEvent -> records SCHEDULE_PUBLISHED log and sends email
         mvc.perform(post("/api/v1/work-schedules/publish")
                 .header("Authorization", "Bearer " + managerToken)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -147,17 +155,35 @@ class ShiftReminderIntegrationTests {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.publishedCount").value(1));
 
-        // Now cron triggers 30-min shift reminder once against real work_schedules query
+        verify(emailGateway, times(1)).sendEmail(
+            eq("emp.notif@example.com"),
+            contains("Lịch làm việc đã được công bố"),
+            contains(scheduleDate.toString())
+        );
+
+        // Now cron triggers 30-min shift reminder once against real work_schedules query -> sends 30m reminder email
         mvc.perform(post("/api/v1/notification-jobs/shift-reminders")
                 .header("X-Reminder-Cron-Key", "test-only-cron-secret-more-than-32-characters"))
             .andExpect(status().isAccepted())
             .andExpect(jsonPath("$.queued").value(1));
 
-        // Second cron run must deduplicate via shift_reminder_deliveries -> 0 queued
+        verify(emailGateway, times(1)).sendEmail(
+            eq("emp.notif@example.com"),
+            contains("Ca Nhắc 30p"),
+            contains("30 phút")
+        );
+
+        // Second cron run must deduplicate via shift_reminder_deliveries -> 0 queued, no duplicate email
         mvc.perform(post("/api/v1/notification-jobs/shift-reminders")
                 .header("X-Reminder-Cron-Key", "test-only-cron-secret-more-than-32-characters"))
             .andExpect(status().isAccepted())
             .andExpect(jsonPath("$.queued").value(0));
+
+        verify(emailGateway, times(1)).sendEmail(
+            eq("emp.notif@example.com"),
+            contains("Ca Nhắc 30p"),
+            contains("30 phút")
+        );
 
         // Employee fetches persisted notifications via GET /api/v1/notifications/me
         mvc.perform(get("/api/v1/notifications/me")
